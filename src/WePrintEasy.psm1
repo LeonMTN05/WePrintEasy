@@ -18,11 +18,15 @@ $script:PrinterRegKey    = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\W
 $script:ComputerDomain   = ''   # Zwischenspeicher fuer Get-WpeLdapPrefix
 
 # Version und Projekt - nur hier pflegen
-$script:WpeVersion       = '1.0.4'
+$script:WpeVersion       = '1.0.5'
 $script:WpeAuthor        = 'LeonMTN05'
 $script:WpeAuthorUrl     = 'https://github.com/LeonMTN05'
 $script:WpeProjectUrl    = 'https://github.com/LeonMTN05/WePrintEasy'
 $script:WpeLicense       = 'MIT'
+# Update-Pruefung: liefert immer die neueste Version (version, released, url, sha256, size)
+$script:WpeUpdateUrl     = 'https://dl.weprinteasy.com/latest.json'
+$script:WpeUpdateHosts   = @('dl.weprinteasy.com', 'dl.weprinteasy.de')
+$script:WpeUserRegKey    = 'HKCU:\Software\WePrintEasy'
 
 #region Sprache ---------------------------------------------------------------
 
@@ -1600,6 +1604,146 @@ function Get-WpeIssueUrl {
 
 #endregion
 
+#region Update-Pruefung --------------------------------------------------------
+
+function ConvertTo-WpeVersion {
+    <# Versionsnummer (1.0.4, v1.0.10) als [version] fuer numerische Vergleiche (1.0.10 > 1.0.9); ungueltig: $null. #>
+    param([string]$Text)
+    $t = ([string]$Text).Trim() -replace '^[vV]', ''
+    if ($t -notmatch '^\d+(\.\d+){1,3}$') { return $null }
+    try { return [version]$t } catch { return $null }
+}
+
+function ConvertTo-WpeLatestRelease {
+    <#
+        Prueft den Inhalt von latest.json und liefert version, released, url, sha256, size.
+        Die Adresse muss per HTTPS auf einen WePrintEasy-Downloadserver zeigen und die Datei
+        WePrintEasy-Setup-<version>.exe mit genau dieser Version heissen - so kann eine falsch
+        benannte Datei kein Update melden, das keins ist.
+    #>
+    param([Parameter(Mandatory)][string]$Json)
+    $data = $Json | ConvertFrom-Json
+    $field = { param($n) if ($data -and $data.PSObject.Properties[$n]) { $data.$n } else { $null } }
+    $version = ConvertTo-WpeVersion ([string](& $field 'version'))
+    if (-not $version) { throw (Get-WpeText 'UpdateCheck.Invalid' 'version') }
+    $uri = $null
+    if (-not [Uri]::TryCreate([string](& $field 'url'), [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne 'https' -or $script:WpeUpdateHosts -notcontains $uri.Host.ToLowerInvariant()) {
+        throw (Get-WpeText 'UpdateCheck.Invalid' 'url')
+    }
+    $file = [IO.Path]::GetFileName($uri.AbsolutePath)
+    if ($file -notmatch '^WePrintEasy-Setup-(\d+(\.\d+){1,3})\.exe$' -or (ConvertTo-WpeVersion $Matches[1]) -ne $version) {
+        throw (Get-WpeText 'UpdateCheck.Invalid' "url ($file / $version)")
+    }
+    $sha = ([string](& $field 'sha256')).Trim().ToLowerInvariant()
+    if ($sha -notmatch '^[0-9a-f]{64}$') { throw (Get-WpeText 'UpdateCheck.Invalid' 'sha256') }
+    $size = 0L
+    if (-not [long]::TryParse([string](& $field 'size'), [ref]$size) -or $size -le 0) { throw (Get-WpeText 'UpdateCheck.Invalid' 'size') }
+    $released = $null
+    $r = [string](& $field 'released')
+    if ($r) { try { $released = [DateTimeOffset]::Parse($r, [Globalization.CultureInfo]::InvariantCulture) } catch { Write-Verbose $_.Exception.Message } }
+    [pscustomobject]@{ Version = $version; Released = $released; Url = $uri.AbsoluteUri; FileName = $file; Sha256 = $sha; Size = $size }
+}
+
+function Invoke-WpeHttpGet {
+    <#
+        HTTPS-Abruf ohne Invoke-WebRequest (dessen Fortschrittsanzeige in Windows PowerShell 5.1 ohne
+        sichtbare Konsole haengen kann): -OutFile speichert, sonst kommt der Text zurueck. Der Timeout gilt
+        fuer den Verbindungsaufbau und jeden Lesevorgang; der System-Proxy wird mit der Windows-Anmeldung genutzt.
+    #>
+    param([Parameter(Mandatory)][string]$Uri, [string]$OutFile, [int]$TimeoutSec = 10)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $req = [Net.HttpWebRequest][Net.WebRequest]::Create($Uri)
+    $req.Timeout = $TimeoutSec * 1000
+    $req.ReadWriteTimeout = $TimeoutSec * 1000
+    $req.UserAgent = "WePrintEasy/$script:WpeVersion"
+    $req.Headers['Cache-Control'] = 'no-cache'
+    $req.AutomaticDecompression = [Net.DecompressionMethods]::GZip -bor [Net.DecompressionMethods]::Deflate
+    if ($req.Proxy) { $req.Proxy.Credentials = [Net.CredentialCache]::DefaultCredentials }
+    $res = $req.GetResponse()
+    try {
+        $stream = $res.GetResponseStream()
+        if ($OutFile) {
+            $fs = [IO.File]::Create($OutFile)
+            try { $stream.CopyTo($fs) } finally { $fs.Dispose() }
+        } else {
+            $reader = New-Object System.IO.StreamReader($stream, [Text.Encoding]::UTF8)
+            try { $reader.ReadToEnd() } finally { $reader.Dispose() }
+        }
+    } finally { $res.Dispose() }
+}
+
+function Get-WpeLatestRelease {
+    <# Ruft latest.json ab (Timeout in Sekunden) und prueft den Inhalt (ConvertTo-WpeLatestRelease). #>
+    [CmdletBinding()]
+    param([string]$Uri = $script:WpeUpdateUrl, [int]$TimeoutSec = 10)
+    ConvertTo-WpeLatestRelease -Json (Invoke-WpeHttpGet -Uri $Uri -TimeoutSec $TimeoutSec)
+}
+
+function Test-WpeNewerVersion {
+    <# $true, wenn -Latest numerisch hoeher ist als -Current (Standard: diese Version). #>
+    param([Parameter(Mandatory)]$Latest, $Current = $script:WpeVersion)
+    $l = ConvertTo-WpeVersion ([string]$Latest)
+    $c = ConvertTo-WpeVersion ([string]$Current)
+    return [bool]($l -and $c -and $l -gt $c)
+}
+
+function Test-WpeUpdateCheckDue {
+    <#
+        Automatische Pruefung hoechstens einmal am Tag (je Benutzer, HKCU). Abschaltbar fuer den
+        ganzen Server mit HKLM\SOFTWARE\WePrintEasy\DisableUpdateCheck = 1 (DWORD).
+    #>
+    param([TimeSpan]$Interval = [TimeSpan]::FromDays(1))
+    $machine = Get-ItemProperty -LiteralPath $script:RegistryKey -Name DisableUpdateCheck -ErrorAction SilentlyContinue
+    if ($machine -and [int]$machine.DisableUpdateCheck -eq 1) { return $false }
+    $last = Get-ItemProperty -LiteralPath $script:WpeUserRegKey -Name LastUpdateCheck -ErrorAction SilentlyContinue
+    if (-not $last) { return $true }
+    $when = [DateTime]::MinValue
+    if (-not [DateTime]::TryParse([string]$last.LastUpdateCheck, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$when)) { return $true }
+    return ((Get-Date).ToUniversalTime() - $when.ToUniversalTime()) -ge $Interval
+}
+
+function Set-WpeUpdateCheckTime {
+    <# Merkt den Zeitpunkt der letzten automatischen Pruefung (HKCU). #>
+    try {
+        if (-not (Test-Path -LiteralPath $script:WpeUserRegKey)) { New-Item -Path $script:WpeUserRegKey -Force | Out-Null }
+        Set-ItemProperty -LiteralPath $script:WpeUserRegKey -Name LastUpdateCheck -Value ((Get-Date).ToUniversalTime().ToString('o'))
+    } catch { Write-Verbose $_.Exception.Message }
+}
+
+function Test-WpeDownload {
+    <# Prueft Groesse und SHA-256 einer heruntergeladenen Datei; bei Abweichung Ausnahme. #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Sha256, [long]$Size = 0)
+    $len = (Get-Item -LiteralPath $Path).Length
+    if ($Size -gt 0 -and $len -ne $Size) { throw (Get-WpeText 'UpdateCheck.SizeMismatch' $Size $len) }
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $Sha256.Trim().ToLowerInvariant()) { throw (Get-WpeText 'UpdateCheck.HashMismatch' $Sha256.ToLowerInvariant() $actual) }
+}
+
+function Save-WpeUpdate {
+    <#
+        Laedt das Setup eines Releases (ConvertTo-WpeLatestRelease) in einen neuen Temp-Ordner und
+        prueft Groesse und SHA-256. Liefert den Pfad; bei Abweichung wird die Datei geloescht.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Release, [int]$TimeoutSec = 60)
+    # Reste frueherer Updates entfernen (das gestartete Setup kann seine eigene Datei nicht loeschen)
+    Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'WePrintEasy-Update-*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('WePrintEasy-Update-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $path = Join-Path $dir $Release.FileName
+    try {
+        Invoke-WpeHttpGet -Uri $Release.Url -OutFile $path -TimeoutSec $TimeoutSec
+        Test-WpeDownload -Path $path -Sha256 $Release.Sha256 -Size $Release.Size
+        return $path
+    } catch {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
+#endregion
+
 #region Systempruefung --------------------------------------------------------
 
 function Get-WpeSystemStatus {
@@ -1771,5 +1915,7 @@ Export-ModuleMember -Function @(
     'Set-WpePrinterCatalog', 'Install-WpePrinterDriver', 'Get-WpeAgentLogPath',
     'Get-WpeExecutionPolicy', 'Get-WpeHiddenLaunch', 'Get-WpeSignatureStatus',
     'Measure-WpeEditDistance', 'Get-WpeAdComputer', 'Invoke-WpeRemoteForce',
-    'Get-WpeAboutInfo', 'Get-WpeSystemInfo', 'Get-WpeIssueUrl'
+    'Get-WpeAboutInfo', 'Get-WpeSystemInfo', 'Get-WpeIssueUrl',
+    'ConvertTo-WpeVersion', 'ConvertTo-WpeLatestRelease', 'Get-WpeLatestRelease', 'Test-WpeNewerVersion',
+    'Test-WpeUpdateCheckDue', 'Set-WpeUpdateCheckTime', 'Test-WpeDownload', 'Save-WpeUpdate'
 )

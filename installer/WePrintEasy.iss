@@ -17,6 +17,13 @@
 ;   unter "Einstellungen"). Unbeaufsichtigt nur mit /LANG=, sonst bleibt die bisherige Sprache.
 ;   Rueckgabewert 0 = erfolgreich, 10 = Einrichtung/Update fehlgeschlagen (Protokoll: Setup\WePrintEasy-Setup.log).
 ;   unins000.exe /VERYSILENT [/REMOVECONFIG]  - /REMOVECONFIG loescht auch die lokale Konfiguration.
+;   Microsoft Store (Pakettyp EXE): Silent-Parameter "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART".
+;   Rueckgabewerte: 0 = erfolgreich, 10 = Einrichtung/Update fehlgeschlagen, 1-8 = Inno Setup
+;   (u. a. 2/5 = abgebrochen, 3/4 = schwerer Fehler, 8 = Neustart noetig).
+;
+; Ein neues Setup ersetzt die alte Version: gleiche AppId, Programmordner aus der Registry
+; (InstallPath), offene Druckerverwaltungen werden vorher geschlossen (CloseAdminConsoles).
+; Die Update-Pruefung der Verwaltung (latest.json) startet dieses Setup mit /LANG=<Sprache>.
 
 #ifndef RepoRoot
   #define RepoRoot AddBackslash(SourcePath) + ".."
@@ -245,6 +252,25 @@ begin
   Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 end;
 
+{ Offene Druckerverwaltungen (alle Sitzungen) schliessen: erst "Schliessen" ans Fenster, nach 5 s beenden.
+  Die Anmelde-Agenten der Benutzer laufen weiter (sie nutzen die neue Version ab der naechsten Anmeldung). }
+procedure CloseAdminConsoles;
+var
+  ResultCode: Integer;
+  Cmd: String;
+begin
+  { Ohne diesen Prozess selbst - seine Befehlszeile enthaelt den Suchbegriff ebenfalls }
+  Cmd := '$p = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -in ''powershell.exe'', ''pwsh.exe'' -and $_.CommandLine -like ''*WePrintEasy-Admin.ps1*'' }); ' +
+    'if (-not $p) { exit 0 }; ' +
+    'foreach ($x in $p) { try { [void](Get-Process -Id $x.ProcessId -ErrorAction Stop).CloseMainWindow() } catch {} }; ' +
+    'for ($i = 0; $i -lt 10 -and @($p | Where-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }).Count; $i++) { Start-Sleep -Milliseconds 500 }; ' +
+    'foreach ($x in $p) { Stop-Process -Id $x.ProcessId -Force -ErrorAction SilentlyContinue }; exit $p.Count';
+  Log('Closing open printer management windows');
+  if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Cmd + '"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log(Format('Printer management windows closed: %d', [ResultCode]));
+end;
+
 function HasSwitch(const Name: String): Boolean;
 var
   I: Integer;
@@ -404,6 +430,13 @@ begin
   if InstalledVersion = '' then InstalledVersion := CustomMessage('VersionUnknown');
 end;
 
+{ Vor dem Kopieren: eine laufende Druckerverwaltung schliessen, damit sie nicht mit der alten Version weiterlaeuft }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if InstalledBefore then CloseAdminConsoles;
+end;
+
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 begin
   if InstalledBefore then begin
@@ -458,6 +491,7 @@ begin
   if HasSwitch('/REMOVECONFIG') or (not UninstallSilent and
       (MsgBox(CustomMessage('UninstallRemoveConfig'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES)) then
     Params := Params + ' -RemoveConfig';
+  CloseAdminConsoles;
   Params := Format('-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { & ''%s'' %s *> ''%s''; exit 0 } catch { ($_ | Out-String) | Out-File -LiteralPath ''%s'' -Append; exit 1 }"', [
     ExpandConstant('{app}\Setup\Uninstall-WePrintEasy.ps1'), Params, UninstallLog, UninstallLog]);
   Log('powershell.exe ' + Params);

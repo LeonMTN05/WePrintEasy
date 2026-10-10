@@ -528,6 +528,17 @@ $btnInfo.Location = New-Object System.Drawing.Point(($header.Width - 106), 16)
 $btnInfo.Anchor = 'Top, Right'
 $header.Controls.Add($btnInfo)
 $btnInfo.Add_Click({ Show-WpeAboutDialog -ConfigPath $script:ConfigPath })
+$btnUpdate = New-Object System.Windows.Forms.Button
+$btnUpdate.Text = Get-WpeText 'UpdateCheck.Button'
+$btnUpdate.FlatStyle = 'Flat'
+$btnUpdate.FlatAppearance.BorderColor = [System.Drawing.Color]::White
+$btnUpdate.ForeColor = [System.Drawing.Color]::White
+$btnUpdate.BackColor = $script:WpeAccent
+$btnUpdate.Size = New-Object System.Drawing.Size(160, 30)
+$btnUpdate.Location = New-Object System.Drawing.Point(($header.Width - 274), 16)
+$btnUpdate.Anchor = 'Top, Right'
+$header.Controls.Add($btnUpdate)
+$btnUpdate.Add_Click({ Start-WpeUpdateCheck -Owner $form -Manual -StatusLabel $statusLabel })
 $form.KeyPreview = $true
 $form.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::F1) { $_.Handled = $true; Show-WpeAboutDialog -ConfigPath $script:ConfigPath } })
 
@@ -1103,6 +1114,8 @@ $form.Add_Shown({
         $form.Activate()
         if (-not $script:WpeScreenshotDir) {
             if ($script:Config.Assignments.Count -eq 0 -and $script:Config.Printers.Count -eq 0) { $tabs.SelectedTab = $tabHelp }
+            # Neue Version? Im Hintergrund, hoechstens einmal am Tag; Fehler werden ignoriert
+            try { Start-WpeUpdateCheck -Owner $form -StatusLabel $statusLabel } catch { Write-Verbose $_.Exception.Message }
             return
         }
         # --- Test-/Dokumentationsmodus: alle Ansichten fotografieren -------------

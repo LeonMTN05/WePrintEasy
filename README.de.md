@@ -8,7 +8,7 @@
 Gesetzt bei jeder Anmeldung – und auf Wunsch festgehalten während der ganzen Sitzung.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.4-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.5-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-systemvoraussetzungen)
@@ -116,13 +116,29 @@ Alternative zum ZIP: eine einzelne `.exe` mit Eintrag unter **Apps / Programme u
 
 ```powershell
 # Unbeaufsichtigt (Rückgabewert 0 = erfolgreich, 10 = fehlgeschlagen, Protokoll: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.4.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.5.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
 `/INSTALLARGS` gilt nur für Neuinstallationen und enthält Parameter von [`Install-WePrintEasy.ps1`](#️-installation-per-kommandozeile)
 (Werte in einfachen Anführungszeichen). Selbst bauen: [Inno Setup 6](https://jrsoftware.org/isinfo.php) installieren
 (`winget install --id JRSoftware.InnoSetup -e`), dann `.\tools\Build-Installer.ps1` → `dist\`.
+
+Für den **Microsoft Store** (Pakettyp EXE) gelten dieselben stillen Parameter: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
+Ein neues Setup ersetzt die vorhandene Version (gleiche App-ID, gleicher Programmordner) und schließt vorher offene Druckerverwaltungen.
+
+### 🔔 Update-Prüfung
+
+Die Druckerverwaltung fragt beim Start im Hintergrund `https://dl.weprinteasy.com/latest.json` ab – höchstens einmal am Tag,
+mit 10 Sekunden Timeout; ohne Internet läuft sie normal weiter. Gibt es eine neuere Version, erscheint **„Neue Version X verfügbar“**:
+*Jetzt aktualisieren* lädt das Setup in einen Temp-Ordner, prüft seine SHA-256-Prüfsumme, startet es und beendet die Verwaltung.
+Manuell: Knopf **Nach Updates suchen** im Kopfbereich.
+
+Abschalten für einen Server (die manuelle Prüfung bleibt möglich):
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\WePrintEasy' -Name DisableUpdateCheck -Value 1 -Type DWord
+```
 
 ## 🔄 Update
 

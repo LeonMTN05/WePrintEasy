@@ -579,6 +579,143 @@ function Show-WpeAboutDialog {
 
 #endregion
 
+#region Update-Pruefung -------------------------------------------------------
+
+$script:WpeUpdateJob = $null
+
+function Start-WpeUpdateCheck {
+    <#
+        Prueft im Hintergrund, ob es eine neue Version gibt (latest.json, Timeout 10 s), ohne das
+        Fenster zu blockieren. Automatisch hoechstens einmal am Tag; Fehler werden still ignoriert.
+        -Manual ("Nach Updates suchen"): immer pruefen und das Ergebnis bzw. den Fehler anzeigen.
+    #>
+    param(
+        [Parameter(Mandatory)][System.Windows.Forms.Form]$Owner,
+        [switch]$Manual,
+        [System.Windows.Forms.ToolStripStatusLabel]$StatusLabel
+    )
+    if ($script:WpeScreenshotDir -or $script:WpeUpdateJob) { return }
+    if (-not $Manual) {
+        if (-not (Test-WpeUpdateCheckDue)) { return }
+        Set-WpeUpdateCheckTime
+    }
+    # Eigener Runspace mit dem Modul: Abruf und Pruefung von latest.json (Get-WpeLatestRelease)
+    $ps = [PowerShell]::Create()
+    [void]$ps.AddScript({
+            param($ModulePath, $Language)
+            try {
+                Import-Module $ModulePath -Force -ErrorAction Stop
+                Set-WpeLanguage $Language
+                @{ Release = (Get-WpeLatestRelease -TimeoutSec 10); Error = '' }
+            } catch { @{ Release = $null; Error = $_.Exception.Message } }
+        }.ToString()).AddArgument((Get-Module WePrintEasy).Path).AddArgument((Get-WpeLanguage))
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 250
+    $script:WpeUpdateJob = @{ PS = $ps; Handle = $ps.BeginInvoke(); Timer = $timer; Owner = $Owner; Manual = [bool]$Manual; Started = Get-Date; Status = $StatusLabel }
+    if ($Manual -and $StatusLabel) { $StatusLabel.Text = Get-WpeText 'UpdateCheck.Checking' }
+    $timer.Add_Tick({ Complete-WpeUpdateCheck })
+    $timer.Start()
+}
+
+function Complete-WpeUpdateCheck {
+    <# Timer: wertet die fertige Hintergrundpruefung aus und bietet ggf. das Update an. #>
+    $job = $script:WpeUpdateJob
+    if (-not $job) { return }
+    $timedOut = ((Get-Date) - $job.Started).TotalSeconds -ge 20
+    if (-not $job.Handle.IsCompleted -and -not $timedOut) { return }
+    $job.Timer.Stop()
+    $job.Timer.Dispose()
+    $script:WpeUpdateJob = $null
+    if ($job.Manual -and $job.Status) { $job.Status.Text = '' }
+    $result = $null
+    if ($job.Handle.IsCompleted) {
+        try { $result = @($job.PS.EndInvoke($job.Handle))[0] } catch { $result = @{ Release = $null; Error = $_.Exception.Message } }
+        $job.PS.Dispose()
+    } else {
+        # Haengt z. B. an einem Proxy: aufgeben, die Verwaltung laeuft normal weiter
+        [void]$job.PS.BeginStop($null, $null)
+        $result = @{ Release = $null; Error = 'Timeout' }
+    }
+    if ($job.Owner.IsDisposed) { return }
+    $release = if ($result) { $result.Release } else { $null }
+    if (-not $release) {
+        if ($job.Manual) { Show-WpeMessage (Get-WpeText 'UpdateCheck.Failed' $(if ($result -and $result.Error) { $result.Error } else { 'no response' })) 'Warning' }
+        return
+    }
+    if (-not (Test-WpeNewerVersion -Latest $release.Version)) {
+        if ($job.Manual) { Show-WpeMessage (Get-WpeText 'UpdateCheck.UpToDate' (Get-WpeAboutInfo).Version) }
+        return
+    }
+    if (Show-WpeUpdatePrompt -Release $release -Owner $job.Owner) {
+        Invoke-WpeUpdate -Release $release -Owner $job.Owner -StatusLabel $job.Status
+    }
+}
+
+function Show-WpeUpdatePrompt {
+    <# Dialog "Neue Version X verfuegbar" mit "Jetzt aktualisieren" / "Spaeter"; $true = jetzt aktualisieren. #>
+    param([Parameter(Mandatory)]$Release, [System.Windows.Forms.Form]$Owner)
+    $culture = [Globalization.CultureInfo]::GetCultureInfo($(if ((Get-WpeLanguage) -eq 'de') { 'de-DE' } else { 'en-US' }))
+    $released = if ($Release.Released) { Get-WpeText 'UpdateCheck.Released' $Release.Released.LocalDateTime.ToString('d', $culture) } else { '' }
+    $size = '{0} MB' -f ($Release.Size / 1MB).ToString('N1', $culture)
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = Get-WpeText 'UpdateCheck.Title' $Release.Version
+    $dlg.ClientSize = New-Object System.Drawing.Size(560, 196)
+    $dlg.StartPosition = 'CenterParent'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+    $dlg.Font = $script:WpeFont
+    Set-WpeFormIcon $dlg
+
+    $pic = New-Object System.Windows.Forms.PictureBox
+    $pic.Location = New-Object System.Drawing.Point(20, 20)
+    $pic.Size = New-Object System.Drawing.Size(48, 48)
+    $pic.SizeMode = 'StretchImage'
+    if ($script:WpeIcon) { $pic.Image = (New-Object System.Drawing.Icon($script:WpeIcon, 48, 48)).ToBitmap() }
+    $title = New-WpeLabel (Get-WpeText 'UpdateCheck.Title' $Release.Version) 84 14 456 26
+    $title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 12)
+    $title.ForeColor = $script:WpeAccent
+    $text = New-WpeLabel ((@(Get-WpeText 'UpdateCheck.Text' $Release.Version (Get-WpeAboutInfo).Version $released $size)) -join "`r`n") 84 46 456 96
+    $btnNow = New-WpeButton (Get-WpeText 'UpdateCheck.Now') 274 152 160
+    $btnNow.Font = $script:WpeFontBold
+    $btnNow.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $btnLater = New-WpeButton (Get-WpeText 'UpdateCheck.Later') 440 152 100
+    $btnLater.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $dlg.Controls.AddRange(@($pic, $title, $text, $btnNow, $btnLater))
+    $dlg.AcceptButton = $btnNow
+    $dlg.CancelButton = $btnLater
+    $r = if ($Owner -and -not $Owner.IsDisposed) { $dlg.ShowDialog($Owner) } else { $dlg.ShowDialog() }
+    $dlg.Dispose()
+    return ($r -eq [System.Windows.Forms.DialogResult]::OK)
+}
+
+function Invoke-WpeUpdate {
+    <# Laedt das Setup (SHA-256 geprueft), startet es in der eingestellten Sprache und beendet das Programm. #>
+    param([Parameter(Mandatory)]$Release, [Parameter(Mandatory)][System.Windows.Forms.Form]$Owner, [System.Windows.Forms.ToolStripStatusLabel]$StatusLabel)
+    $oldStatus = if ($StatusLabel) { $StatusLabel.Text } else { '' }
+    if ($StatusLabel) { $StatusLabel.Text = Get-WpeText 'UpdateCheck.Downloading' $Release.Version; $Owner.Refresh() }
+    try {
+        $path = Invoke-WpeWithWaitCursor $Owner { Save-WpeUpdate -Release $Release }
+    } catch {
+        if ($StatusLabel) { $StatusLabel.Text = $oldStatus }
+        Show-WpeMessage (Get-WpeText 'UpdateCheck.DownloadFailed' $_.Exception.Message) 'Error'
+        return
+    }
+    if ($StatusLabel) { $StatusLabel.Text = $oldStatus }
+    try {
+        # Das Setup braucht Administratorrechte; es erkennt die Installation und aktualisiert sie
+        Start-Process -FilePath $path -ArgumentList "/LANG=$(Get-WpeLanguage)" -Verb RunAs -ErrorAction Stop
+    } catch {
+        Show-WpeMessage (Get-WpeText 'UpdateCheck.StartFailed' $_.Exception.Message) 'Error'
+        return
+    }
+    $Owner.Close()
+}
+
+#endregion
+
 #region Anleitung -------------------------------------------------------------
 
 function Get-WpeGuideLines {

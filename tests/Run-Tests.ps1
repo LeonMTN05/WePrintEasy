@@ -252,6 +252,40 @@ Group;Lager;\\srv\Lager;20
     Assert 'Agent protokolliert in der eingestellten Sprache' { (Get-WpeLanguage) -eq 'de' -and $langLines[0] -like 'Keine Druckerzuweisung*' }
     Set-WpeLanguage en
 
+    Write-Host 'Update-Pruefung'
+    Assert 'Versionen numerisch: 1.0.10 ist neuer als 1.0.9' { Test-WpeNewerVersion -Latest '1.0.10' -Current '1.0.9' }
+    Assert 'Gleiche Version ist kein Update' { -not (Test-WpeNewerVersion -Latest '1.0.4' -Current '1.0.4') }
+    Assert 'Aeltere Version ist kein Update' { -not (Test-WpeNewerVersion -Latest '1.0.3' -Current '1.0.4') }
+    Assert 'Ungueltige Version ist kein Update' { -not (Test-WpeNewerVersion -Latest 'neu' -Current '1.0.4') }
+    $latest = { param($v, $u, $s = ('a' * 64), $n = 2553552) ConvertTo-Json @{ version = $v; released = '2026-10-10T12:28:22Z'; url = $u; sha256 = $s; size = $n } }
+    $ok = ConvertTo-WpeLatestRelease -Json (& $latest '1.0.4' 'https://dl.weprinteasy.com/WePrintEasy-Setup-1.0.4.exe')
+    Assert 'latest.json: Version, Datei, Groesse und Datum' { $ok.Version -eq [version]'1.0.4' -and $ok.FileName -eq 'WePrintEasy-Setup-1.0.4.exe' -and $ok.Size -eq 2553552 -and $ok.Released.Year -eq 2026 }
+    $rejected = {
+        param($json)
+        try { [void](ConvertTo-WpeLatestRelease -Json $json); $false } catch { $true }
+    }
+    Assert 'latest.json: Dateiname mit anderer Version wird abgelehnt' { & $rejected (& $latest '1.0.5' 'https://dl.weprinteasy.com/WePrintEasy-Setup-1.0.4.exe') }
+    Assert 'latest.json: http statt https wird abgelehnt' { & $rejected (& $latest '1.0.4' 'http://dl.weprinteasy.com/WePrintEasy-Setup-1.0.4.exe') }
+    Assert 'latest.json: fremder Server wird abgelehnt' { & $rejected (& $latest '1.0.4' 'https://example.com/WePrintEasy-Setup-1.0.4.exe') }
+    Assert 'latest.json: ungueltige Pruefsumme wird abgelehnt' { & $rejected (& $latest '1.0.4' 'https://dl.weprinteasy.com/WePrintEasy-Setup-1.0.4.exe' 'xyz') }
+    Assert 'latest.json: fehlende Version wird abgelehnt' { & $rejected '{ "url": "https://dl.weprinteasy.com/WePrintEasy-Setup-1.0.4.exe" }' }
+    $dl = Join-Path $tmp 'WePrintEasy-Setup-9.9.9.exe'
+    [IO.File]::WriteAllBytes($dl, [byte[]](1..200))
+    $dlHash = (Get-FileHash -LiteralPath $dl -Algorithm SHA256).Hash
+    Assert 'Download mit passender Pruefsumme wird angenommen' { Test-WpeDownload -Path $dl -Sha256 $dlHash -Size 200; $true }
+    Assert 'Download mit falscher Pruefsumme wird abgelehnt' { try { Test-WpeDownload -Path $dl -Sha256 ('0' * 64) -Size 200; $false } catch { $_.Exception.Message -like '*SHA-256*' } }
+    Assert 'Download mit falscher Groesse wird abgelehnt' { try { Test-WpeDownload -Path $dl -Sha256 $dlHash -Size 201; $false } catch { $true } }
+    # Tagessperre (HKCU) - Wert des angemeldeten Benutzers sichern und wiederherstellen
+    $userKey = 'HKCU:\Software\WePrintEasy'
+    $savedCheck = Get-ItemProperty -LiteralPath $userKey -Name LastUpdateCheck -ErrorAction SilentlyContinue
+    try {
+        Set-WpeUpdateCheckTime
+        Assert 'Update-Pruefung hoechstens einmal am Tag' { -not (Test-WpeUpdateCheckDue) -and (Test-WpeUpdateCheckDue -Interval ([TimeSpan]::Zero)) }
+    } finally {
+        if ($savedCheck) { Set-ItemProperty -LiteralPath $userKey -Name LastUpdateCheck -Value $savedCheck.LastUpdateCheck }
+        else { Remove-ItemProperty -LiteralPath $userKey -Name LastUpdateCheck -ErrorAction SilentlyContinue }
+    }
+
     Write-Host 'App-Symbol'
     $icoBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..\src\WePrintEasy.ico'))
     Assert 'WePrintEasy.ico: Symboldatei mit 8 Groessen (16 bis 256)' { [BitConverter]::ToUInt16($icoBytes, 2) -eq 1 -and [BitConverter]::ToUInt16($icoBytes, 4) -eq 8 -and $icoBytes[6] -eq 16 -and $icoBytes[6 + 7 * 16] -eq 0 }

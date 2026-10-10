@@ -638,6 +638,27 @@
     'Update.AgentsRunning'           = '{0} laufende(r) Agent(en) in Benutzersitzungen nutzen die neue Version ab der nächsten Anmeldung.'
     'Update.DoneErrors'              = 'Update abgeschlossen - die Systemprüfung meldet {0} Fehler (siehe oben).'
     'Update.Done'                    = 'Update erfolgreich abgeschlossen.'
+
+    # --- Update-Prüfung (Druckerverwaltung) ---
+    'UpdateCheck.Button'             = 'Nach Updates suchen'
+    'UpdateCheck.Checking'           = 'Suche nach Updates ...'
+    'UpdateCheck.Title'              = 'Neue Version {0} verfügbar'
+    'UpdateCheck.Text'               = @(
+        'WePrintEasy {0} ist verfügbar (installiert: {1}{2}).'
+        ''
+        '"Jetzt aktualisieren" lädt das Setup ({3}), prüft seine SHA-256-Prüfsumme, startet es und beendet die Druckerverwaltung. Alle Einstellungen bleiben erhalten.'
+    )
+    'UpdateCheck.Released'           = ', veröffentlicht am {0}'
+    'UpdateCheck.Now'                = 'Jetzt aktualisieren'
+    'UpdateCheck.Later'              = 'Später'
+    'UpdateCheck.Downloading'        = 'WePrintEasy {0} wird heruntergeladen ...'
+    'UpdateCheck.UpToDate'           = 'Sie verwenden die neueste Version von WePrintEasy ({0}).'
+    'UpdateCheck.Failed'             = 'Die Suche nach Updates ist fehlgeschlagen: {0}'
+    'UpdateCheck.DownloadFailed'     = 'Das Update wurde abgebrochen: {0}'
+    'UpdateCheck.StartFailed'        = 'Das Setup konnte nicht gestartet werden: {0}'
+    'UpdateCheck.Invalid'            = 'Ungültige Versionsinformation vom Downloadserver ({0}).'
+    'UpdateCheck.HashMismatch'       = 'Die SHA-256-Prüfsumme des heruntergeladenen Setups stimmt nicht (erwartet {0}, erhalten {1}).'
+    'UpdateCheck.SizeMismatch'       = 'Die Größe des heruntergeladenen Setups stimmt nicht (erwartet {0} Bytes, erhalten {1}).'
     'Uninstall.Remove'               = 'Entfernen'
     'Uninstall.Task'                 = 'Geplante Aufgabe {0}'
     'Uninstall.Certificate'          = 'Zertifikat {0} (My, Root, TrustedPublisher)'

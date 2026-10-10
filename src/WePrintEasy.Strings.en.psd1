@@ -637,6 +637,27 @@
     'Update.AgentsRunning'           = '{0} running agent(s) in user sessions will use the new version from the next logon.'
     'Update.DoneErrors'              = 'Update finished - the system check reports {0} error(s) (see above).'
     'Update.Done'                    = 'Update completed successfully.'
+
+    # --- Update check (printer management) ---
+    'UpdateCheck.Button'             = 'Check for updates'
+    'UpdateCheck.Checking'           = 'Checking for updates ...'
+    'UpdateCheck.Title'              = 'New version {0} available'
+    'UpdateCheck.Text'               = @(
+        'WePrintEasy {0} is available (installed: {1}{2}).'
+        ''
+        '"Update now" downloads the setup ({3}), verifies its SHA-256 checksum, starts it and closes printer management. All settings are kept.'
+    )
+    'UpdateCheck.Released'           = ', released on {0}'
+    'UpdateCheck.Now'                = 'Update now'
+    'UpdateCheck.Later'              = 'Later'
+    'UpdateCheck.Downloading'        = 'Downloading WePrintEasy {0} ...'
+    'UpdateCheck.UpToDate'           = 'You are using the latest version of WePrintEasy ({0}).'
+    'UpdateCheck.Failed'             = 'Checking for updates failed: {0}'
+    'UpdateCheck.DownloadFailed'     = 'The update was cancelled: {0}'
+    'UpdateCheck.StartFailed'        = 'The setup could not be started: {0}'
+    'UpdateCheck.Invalid'            = 'Invalid version information from the download server ({0}).'
+    'UpdateCheck.HashMismatch'       = 'The SHA-256 checksum of the downloaded setup does not match (expected {0}, got {1}).'
+    'UpdateCheck.SizeMismatch'       = 'The size of the downloaded setup does not match (expected {0} bytes, got {1}).'
     'Uninstall.Remove'               = 'Remove'
     'Uninstall.Task'                 = 'Scheduled task {0}'
     'Uninstall.Certificate'          = 'Certificate {0} (My, Root, TrustedPublisher)'

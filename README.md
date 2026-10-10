@@ -8,7 +8,7 @@
 Set at every logon – and, if you like, kept in place for the entire session.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.4-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.5-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-requirements)
@@ -116,13 +116,29 @@ Alternative to the ZIP: a single `.exe` with an entry under **Apps / Programs an
 
 ```powershell
 # Unattended (exit code 0 = success, 10 = failed, log: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.4.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.5.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
 `/INSTALLARGS` only applies to new installations and takes parameters of [`Install-WePrintEasy.ps1`](#️-command-line-installation)
 (values in single quotes). Build it yourself: install [Inno Setup 6](https://jrsoftware.org/isinfo.php)
 (`winget install --id JRSoftware.InnoSetup -e`), then `.\tools\Build-Installer.ps1` → `dist\`.
+
+The same silent parameters apply to the **Microsoft Store** (package type EXE): `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
+A new setup replaces the existing version (same app ID, same program folder) and closes open printer management windows first.
+
+### 🔔 Update check
+
+At start, printer management queries `https://dl.weprinteasy.com/latest.json` in the background – at most once a day,
+with a 10-second timeout; without internet access it keeps working normally. If there is a newer version, **"New version X available"** appears:
+*Update now* downloads the setup to a temp folder, verifies its SHA-256 checksum, starts it and closes printer management.
+Manually: **Check for updates** button in the header.
+
+Turn it off for a server (the manual check stays available):
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\WePrintEasy' -Name DisableUpdateCheck -Value 1 -Type DWord
+```
 
 ## 🔄 Update
 
