@@ -18,7 +18,7 @@ $script:PrinterRegKey    = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\W
 $script:ComputerDomain   = ''   # Zwischenspeicher fuer Get-WpeLdapPrefix
 
 # Version und Projekt - nur hier pflegen
-$script:WpeVersion       = '1.0.3'
+$script:WpeVersion       = '1.0.4'
 $script:WpeAuthor        = 'LeonMTN05'
 $script:WpeAuthorUrl     = 'https://github.com/LeonMTN05'
 $script:WpeProjectUrl    = 'https://github.com/LeonMTN05/WePrintEasy'
@@ -1496,6 +1496,22 @@ function Get-WpeExecutionPolicy {
     return 'AllSigned'
 }
 
+function Get-WpeHiddenLaunch {
+    <#
+        Programm und Argumente, um Windows PowerShell ohne sichtbares Konsolenfenster zu starten
+        (fuer Verknuepfungen und Start-Process). Ab Build 20348 (Windows Server 2022 / Windows 11)
+        ueber "conhost --headless": Ist Windows Terminal die Standardkonsole, laesst
+        "-WindowStyle Hidden" allein ein leeres Terminalfenster offen.
+    #>
+    param([Parameter(Mandatory)][string]$Arguments)
+    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+    if ([Environment]::OSVersion.Version.Build -ge 20348 -and (Test-Path -LiteralPath $conhost)) {
+        return [pscustomobject]@{ FilePath = $conhost; Arguments = "--headless `"$psExe`" $Arguments" }
+    }
+    [pscustomobject]@{ FilePath = $psExe; Arguments = $Arguments }
+}
+
 function Get-WpeSignatureStatus {
     <# Signaturstatus aller Skripte im Installationsordner. #>
     param([Parameter(Mandatory)][string]$InstallPath)
@@ -1753,7 +1769,7 @@ Export-ModuleMember -Function @(
     'Get-WpeSystemStatus', 'Set-WpeClientDefaultPrinterPolicy',
     'New-WpeCatalogEntry', 'ConvertTo-WpePrintServerPrinter', 'Get-WpePrintServerPrinter', 'Get-WpeKnownPrintServer',
     'Set-WpePrinterCatalog', 'Install-WpePrinterDriver', 'Get-WpeAgentLogPath',
-    'Get-WpeExecutionPolicy', 'Get-WpeSignatureStatus',
+    'Get-WpeExecutionPolicy', 'Get-WpeHiddenLaunch', 'Get-WpeSignatureStatus',
     'Measure-WpeEditDistance', 'Get-WpeAdComputer', 'Invoke-WpeRemoteForce',
     'Get-WpeAboutInfo', 'Get-WpeSystemInfo', 'Get-WpeIssueUrl'
 )

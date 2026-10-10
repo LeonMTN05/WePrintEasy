@@ -16,15 +16,25 @@
 
 .PARAMETER NoPause
     Am Ende nicht auf eine Taste warten (für automatisierte Updates).
+
+.PARAMETER Language
+    Sprache von WePrintEasy dabei umstellen (en, de) - wie in der Verwaltung unter
+    "Einstellungen": Konfiguration, Vorgabe des Servers und Verknüpfung.
+    Ohne Angabe bleibt die bisherige Sprache.
 #>
 [CmdletBinding()]
-param([switch]$NoPause)
+param(
+    [switch]$NoPause,
+    [ValidateSet('en', 'de')][string]$Language
+)
 
 $ErrorActionPreference = 'Stop'
 $regKey = 'HKLM:\SOFTWARE\WePrintEasy'
-# Texte in der Sprache der vorhandenen Installation
+# Texte in der Sprache der vorhandenen Installation (bzw. der neu gewählten)
 Import-Module (Join-Path $PSScriptRoot 'src\WePrintEasy.psm1') -Force
 Initialize-WpeLanguage
+$oldLanguage = Get-WpeLanguage
+if ($Language) { Set-WpeLanguage $Language }
 
 function Wait-Exit([int]$Code) {
     if (-not $NoPause) { Write-Host ''; [void](Read-Host (Get-WpeText 'Update.PressEnter')) }
@@ -36,6 +46,7 @@ $principal = New-Object System.Security.Principal.WindowsPrincipal([System.Secur
 if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
     if ($NoPause) { $argList += '-NoPause' }
+    if ($Language) { $argList += @('-Language', $Language) }
     try {
         Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $argList -Verb RunAs
     } catch {
@@ -62,7 +73,12 @@ $signed = $reg.PSObject.Properties['ExecutionPolicy'] -and $reg.ExecutionPolicy 
 Write-Host (Get-WpeText 'Update.InfoInstall' $installPath)
 Write-Host (Get-WpeText 'Update.InfoConfig' $reg.ConfigPath)
 Write-Host (Get-WpeText 'Update.InfoSigning' $(if ($signed) { Get-WpeText 'Update.SignedKept' } else { Get-WpeText 'Common.No' }))
-Write-Host (Get-WpeText 'Update.InfoLanguage' (Get-WpeSupportedLanguage)[(Get-WpeLanguage)])
+$languages = Get-WpeSupportedLanguage
+if ((Get-WpeLanguage) -ne $oldLanguage) {
+    Write-Host (Get-WpeText 'Update.InfoLanguageChange' $languages[(Get-WpeLanguage)] $languages[$oldLanguage])
+} else {
+    Write-Host (Get-WpeText 'Update.InfoLanguage' $languages[(Get-WpeLanguage)])
+}
 Write-Host (Get-WpeText 'Update.InfoSource' $PSScriptRoot)
 Write-Host ''
 
@@ -86,6 +102,18 @@ try {
     Write-Host (Get-WpeText 'Setup.Error' $_.Exception.Message) -ForegroundColor Red
     Write-Host (Get-WpeText 'Update.Failed') -ForegroundColor Red
     Wait-Exit 1
+}
+
+# Neue Sprache auch in der Konfiguration (dort liest sie die Verwaltung; bei zentraler Konfiguration für alle Server)
+if ((Get-WpeLanguage) -ne $oldLanguage) {
+    try {
+        $cfg = Read-WpeConfig -Path $reg.ConfigPath
+        $cfg.Settings.Language = Get-WpeLanguage
+        Save-WpeConfig -Config $cfg -Path $reg.ConfigPath -Confirm:$false
+        Write-Host (Get-WpeText 'Update.LanguageSaved' $languages[(Get-WpeLanguage)]) -ForegroundColor Cyan
+    } catch {
+        Write-Host (Get-WpeText 'Update.LanguageFailed' $_.Exception.Message) -ForegroundColor Yellow
+    }
 }
 
 # --- Systemprüfung -------------------------------------------------------------------

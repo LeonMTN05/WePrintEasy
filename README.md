@@ -8,7 +8,7 @@
 Set at every logon – and, if you like, kept in place for the entire session.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.3-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.4-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-requirements)
@@ -105,6 +105,24 @@ or AD group – and makes sure it stays that way.
 | Installation | Summary → **Install** with live log → Done (opens printer management if desired) |
 
 </details>
+
+### 📦 Windows installer (`WePrintEasy-Setup-<version>.exe`)
+
+Alternative to the ZIP: a single `.exe` with an entry under **Apps / Programs and Features**.
+
+- **New installation:** copies the installation package to `C:\Program Files\WePrintEasy\Setup` and starts the setup wizard in the installer's language.
+- **Existing installation** (also from the ZIP): update with all settings, like `Update.cmd`; optionally followed by the setup wizard.
+- **Uninstall** via *Apps* – asks whether the local configuration should be deleted as well.
+
+```powershell
+# Unattended (exit code 0 = success, 10 = failed, log: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
+WePrintEasy-Setup-1.0.4.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+& 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
+```
+
+`/INSTALLARGS` only applies to new installations and takes parameters of [`Install-WePrintEasy.ps1`](#️-command-line-installation)
+(values in single quotes). Build it yourself: install [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+(`winget install --id JRSoftware.InnoSetup -e`), then `.\tools\Build-Installer.ps1` → `dist\`.
 
 ## 🔄 Update
 
@@ -388,6 +406,7 @@ In PowerShell: `Invoke-WpeRemoteForce -ComputerName TS01 -UserName jdoe`
 ```
 
 A certificate created with `-SelfSignedCertificate` is always removed as well.
+Set up with the Windows installer: uninstall via *Apps / Programs and Features*.
 
 ## 📁 Project structure
 
@@ -406,6 +425,8 @@ src\WePrintEasy.Strings.*.psd1  Texts per language (en = English, de = German)
 src\WePrintEasy.ico             App icon
 examples\                       Sample configuration and CSV template
 tools\New-WpeIcon.ps1           Generates the app icon (src\WePrintEasy.ico, docs\weprinteasy-icon.png)
+tools\Build-Installer.ps1       Builds the Windows installer dist\WePrintEasy-Setup-<version>.exe
+installer\WePrintEasy.iss       Inno Setup script of the Windows installer
 tests\                          Unit and integration tests (Windows Server 2025)
 LICENSE                         MIT License
 ```

@@ -5,3 +5,4 @@
 *.csv  text eol=crlf
 *.psd1 text eol=crlf
 *.ico  binary
+*.iss  text eol=crlf

@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
@@ -13,15 +13,22 @@
     Ein bei der Installation erstelltes selbstsigniertes Codesignatur-Zertifikat
     (-SelfSignedCertificate) wird immer entfernt; fremde Zertifikate (z. B. aus
     der Firmen-CA) bleiben unangetastet.
+
+.PARAMETER KeepInstallFolder
+    Nur fuer die Deinstallation des Windows-Installers (WePrintEasy-Setup.exe):
+    den Programmordner nicht loeschen, das erledigt dessen Deinstallation selbst.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [switch]$RemoveConfig,
-    [switch]$RemoveClientDefaultPrinterPolicy
+    [switch]$RemoveClientDefaultPrinterPolicy,
+    [switch]$KeepInstallFolder
 )
 
 $ErrorActionPreference = 'Stop'
 $regKey = 'HKLM:\SOFTWARE\WePrintEasy'
+# Eintrag des Windows-Installers unter "Programme und Features" (AppId in installer\WePrintEasy.iss)
+$uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{62BED98D-291F-401A-A240-5C8EC56F56F3}_is1'
 $reg = Get-ItemProperty -LiteralPath $regKey -ErrorAction SilentlyContinue
 $installPath = if ($reg -and $reg.PSObject.Properties['InstallPath']) { $reg.InstallPath } else { Join-Path $env:ProgramFiles 'WePrintEasy' }
 $configPath = if ($reg -and $reg.PSObject.Properties['ConfigPath']) { $reg.ConfigPath } else { Join-Path $env:ProgramData 'WePrintEasy\config.json' }
@@ -42,8 +49,12 @@ foreach ($lnk in Get-WpeShortcutPath -All) {
     if ((Test-Path -LiteralPath $lnk) -and $PSCmdlet.ShouldProcess($lnk, $remove)) { Remove-Item -LiteralPath $lnk -Force }
 }
 
-if ((Test-Path -LiteralPath $installPath) -and $PSCmdlet.ShouldProcess($installPath, $remove)) {
-    Remove-Item -LiteralPath $installPath -Recurse -Force
+if (-not $KeepInstallFolder) {
+    if ((Test-Path -LiteralPath $installPath) -and $PSCmdlet.ShouldProcess($installPath, $remove)) {
+        Remove-Item -LiteralPath $installPath -Recurse -Force
+    }
+    # Mit dem Programmordner ist auch die Deinstallation des Windows-Installers weg
+    if ((Test-Path -LiteralPath $uninstallKey) -and $PSCmdlet.ShouldProcess($uninstallKey, $remove)) { Remove-Item -LiteralPath $uninstallKey -Recurse -Force }
 }
 
 if ($RemoveConfig) {

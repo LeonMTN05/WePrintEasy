@@ -487,7 +487,9 @@ $script:InstallTimer.Add_Tick({
 function Complete-Setup {
     if ($chkOpenAdmin.Checked -and -not $script:WpeScreenshotDir) {
         $admin = Join-Path $env:ProgramFiles 'WePrintEasy\WePrintEasy-Admin.ps1'
-        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile', '-ExecutionPolicy', (Get-WpeExecutionPolicy -Path $admin), '-STA', '-WindowStyle', 'Hidden', '-File', "`"$admin`"") -WindowStyle Hidden
+        # Nicht "Start-Process -WindowStyle Hidden": das verbirgt auch das Fenster der Verwaltung
+        $launch = Get-WpeHiddenLaunch "-NoProfile -ExecutionPolicy $(Get-WpeExecutionPolicy -Path $admin) -STA -WindowStyle Hidden -File `"$admin`""
+        Start-Process -FilePath $launch.FilePath -ArgumentList $launch.Arguments
     }
     $form.Close()
 }

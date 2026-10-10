@@ -433,8 +433,10 @@ if (-not $NoShortcut) {
     foreach ($old in Get-WpeShortcutPath -All) { if ($old -ne $shortcut -and (Test-Path -LiteralPath $old)) { Remove-Item -LiteralPath $old -Force } }
     $shell = New-Object -ComObject WScript.Shell
     $lnk = $shell.CreateShortcut($shortcut)
-    $lnk.TargetPath = $psExe
-    $lnk.Arguments = "-NoProfile -ExecutionPolicy $execPolicy -STA -WindowStyle Hidden -File `"$(Join-Path $InstallPath 'WePrintEasy-Admin.ps1')`""
+    # Ohne sichtbares Konsolenfenster (auch wenn Windows Terminal die Standardkonsole ist)
+    $launch = Get-WpeHiddenLaunch "-NoProfile -ExecutionPolicy $execPolicy -STA -WindowStyle Hidden -File `"$(Join-Path $InstallPath 'WePrintEasy-Admin.ps1')`""
+    $lnk.TargetPath = $launch.FilePath
+    $lnk.Arguments = $launch.Arguments
     $lnk.WorkingDirectory = $InstallPath
     $lnk.IconLocation = "$(Join-Path $InstallPath 'WePrintEasy.ico'),0"
     $lnk.Description = Get-WpeText 'Install.ShortcutDescription'
