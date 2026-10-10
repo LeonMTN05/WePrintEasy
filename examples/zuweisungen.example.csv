@@ -1,0 +1,5 @@
+Type;Name;Printer;Priority;Comment
+User;mmuster;\\printsrv01\HP-Buero-Mustermann;;Raum 2.14
+User;eschmidt;\\printsrv01\Kyocera-Empfang;;
+Group;GG_Buchhaltung;\\printsrv01\Kyocera-Buchhaltung;10;Abteilungsdrucker
+Group;GG_Lager;\\printsrv01\Zebra-Lager;20;

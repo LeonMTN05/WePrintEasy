@@ -1,0 +1,64 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_screenshots:
+        description: 'Bildschirmfotos nach docs/screenshots (deutsch) und docs/screenshots/en (englisch) committen'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows-server:
+    name: Windows Server 2025
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit-Tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\tests\Run-Tests.ps1
+
+      - name: Unit-Tests (PowerShell 7)
+        shell: pwsh
+        run: .\tests\Run-Tests.ps1
+
+      - name: Integrationstests (Drucker, Installer, Agent, Setup, Oberflaeche)
+        shell: powershell
+        run: .\tests\Integration.Windows.ps1 -OutDir "$env:RUNNER_TEMP\wpe-results"
+
+      - name: Ergebnisse und Bildschirmfotos hochladen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpe-test-results
+          path: ${{ runner.temp }}/wpe-results
+          if-no-files-found: warn
+
+      - name: Bildschirmfotos ins Repository uebernehmen
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.publish_screenshots
+        shell: pwsh
+        run: |
+          $src = Join-Path $env:RUNNER_TEMP 'wpe-results\screenshots'
+          if (-not (Test-Path $src)) { Write-Host 'Keine Bildschirmfotos vorhanden.'; exit 0 }
+          New-Item -ItemType Directory -Path docs/screenshots -Force | Out-Null
+          Copy-Item "$src\*.png" docs/screenshots -Force
+          $srcEn = Join-Path $env:RUNNER_TEMP 'wpe-results\screenshots-en'
+          if (Test-Path $srcEn) {
+            New-Item -ItemType Directory -Path docs/screenshots/en -Force | Out-Null
+            Copy-Item "$srcEn\*.png" docs/screenshots/en -Force
+          }
+          Copy-Item "$env:RUNNER_TEMP\wpe-results\summary.txt" docs/screenshots/testergebnis.txt -ErrorAction SilentlyContinue
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/screenshots
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host 'Keine Aenderungen.'; exit 0 }
+          git commit -m "Bildschirmfotos der Oberflaechen aktualisieren (Windows Server 2025)"
+          git push origin "HEAD:$env:GITHUB_REF_NAME"

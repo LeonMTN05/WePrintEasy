@@ -1,0 +1,78 @@
+﻿#Requires -Version 5.1
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    Entfernt WePrintEasy von einem Terminalserver.
+
+.PARAMETER RemoveConfig
+    Loescht zusaetzlich die Konfigurationsdatei (nur bei lokaler Konfiguration).
+
+.PARAMETER RemoveClientDefaultPrinterPolicy
+    Entfernt die bei der Installation mit -DisableClientDefaultPrinter gesetzte Richtlinie.
+
+    Ein bei der Installation erstelltes selbstsigniertes Codesignatur-Zertifikat
+    (-SelfSignedCertificate) wird immer entfernt; fremde Zertifikate (z. B. aus
+    der Firmen-CA) bleiben unangetastet.
+#>
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [switch]$RemoveConfig,
+    [switch]$RemoveClientDefaultPrinterPolicy
+)
+
+$ErrorActionPreference = 'Stop'
+$regKey = 'HKLM:\SOFTWARE\WePrintEasy'
+$reg = Get-ItemProperty -LiteralPath $regKey -ErrorAction SilentlyContinue
+$installPath = if ($reg -and $reg.PSObject.Properties['InstallPath']) { $reg.InstallPath } else { Join-Path $env:ProgramFiles 'WePrintEasy' }
+$configPath = if ($reg -and $reg.PSObject.Properties['ConfigPath']) { $reg.ConfigPath } else { Join-Path $env:ProgramData 'WePrintEasy\config.json' }
+
+# Texte und Verknuepfungsnamen aus dem Modul (Quellordner, sonst Installation - vor dem Loeschen laden)
+$module = Join-Path $PSScriptRoot 'src\WePrintEasy.psm1'
+if (-not (Test-Path -LiteralPath $module)) { $module = Join-Path $installPath 'WePrintEasy.psm1' }
+Import-Module $module -Force
+Initialize-WpeLanguage -ConfigPath $configPath
+$remove = Get-WpeText 'Uninstall.Remove'
+
+# Anmelde-Aufgabe und evtl. uebrig gebliebene "Erzwingen"-Aufgaben
+foreach ($task in @(Get-ScheduledTask -TaskPath '\WePrintEasy\' -ErrorAction SilentlyContinue)) {
+    if ($PSCmdlet.ShouldProcess((Get-WpeText 'Uninstall.Task' $task.TaskName), $remove)) { $task | Unregister-ScheduledTask -Confirm:$false }
+}
+
+foreach ($lnk in Get-WpeShortcutPath -All) {
+    if ((Test-Path -LiteralPath $lnk) -and $PSCmdlet.ShouldProcess($lnk, $remove)) { Remove-Item -LiteralPath $lnk -Force }
+}
+
+if ((Test-Path -LiteralPath $installPath) -and $PSCmdlet.ShouldProcess($installPath, $remove)) {
+    Remove-Item -LiteralPath $installPath -Recurse -Force
+}
+
+if ($RemoveConfig) {
+    if ($configPath.StartsWith('\\')) {
+        Write-Warning (Get-WpeText 'Uninstall.CentralKept' $configPath)
+    } else {
+        $dir = Split-Path -Parent $configPath
+        if ((Test-Path -LiteralPath $dir) -and $PSCmdlet.ShouldProcess($dir, $remove)) {
+            # Rechte zuruecksetzen, falls Dateien nicht lesbar sind (z. B. nach aelteren Installationen)
+            & icacls.exe (Join-Path $dir '*') /reset /C /Q 2>&1 | Out-Null
+            Remove-Item -LiteralPath $dir -Recurse -Force
+        }
+    }
+}
+
+if ($RemoveClientDefaultPrinterPolicy -and $PSCmdlet.ShouldProcess('fForceClientLptDef', $remove)) {
+    Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name fForceClientLptDef -ErrorAction SilentlyContinue
+}
+
+$thumb = if ($reg -and $reg.PSObject.Properties['SigningThumbprint']) { [string]$reg.SigningThumbprint } else { '' }
+if ($thumb -and $reg.PSObject.Properties['SigningCertCreated'] -and $reg.SigningCertCreated -eq 1 -and
+    $PSCmdlet.ShouldProcess((Get-WpeText 'Uninstall.Certificate' $thumb), $remove)) {
+    foreach ($s in 'My', 'Root', 'TrustedPublisher') {
+        $p = "Cert:\LocalMachine\$s\$thumb"
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        if ($s -eq 'My') { Remove-Item -LiteralPath $p -DeleteKey } else { Remove-Item -LiteralPath $p }
+    }
+}
+
+if ((Test-Path -LiteralPath $regKey) -and $PSCmdlet.ShouldProcess($regKey, $remove)) { Remove-Item -LiteralPath $regKey -Recurse -Force }
+
+Write-Host (Get-WpeText 'Uninstall.Done') -ForegroundColor Green
