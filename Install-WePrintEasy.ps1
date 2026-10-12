@@ -166,7 +166,7 @@ $isUnc = $ConfigPath.StartsWith('\\')
 # --- 1. Dateien ----------------------------------------------------------------
 Write-Step (Get-WpeText 'Install.CopyFiles' $InstallPath)
 if (-not (Test-Path -LiteralPath $InstallPath)) { New-Item -ItemType Directory -Path $InstallPath | Out-Null }
-$files = @('WePrintEasy.psm1', 'WePrintEasy.Gui.ps1', 'WePrintEasy-Agent.ps1', 'WePrintEasy-Admin.ps1', 'WePrintEasy.ico') +
+$files = @('WePrintEasy.psm1', 'WePrintEasy.Gui.ps1', 'WePrintEasy-Agent.ps1', 'WePrintEasy-Admin.ps1', 'WePrintEasy-Tray.ps1', 'WePrintEasy.ico') +
     @(Get-ChildItem -LiteralPath $source -Filter 'WePrintEasy.Strings.*.psd1' | ForEach-Object { $_.Name })
 foreach ($f in $files) {
     Copy-Item -LiteralPath (Join-Path $source $f) -Destination $InstallPath -Force
@@ -329,6 +329,20 @@ if ($configOk -and -not $isUnc) {
     } catch {
         Write-Warn (Get-WpeText 'Install.ConfigUnreadable' $_.Exception.Message)
         $configOk = $false
+    }
+}
+
+# Druckerwahl durch Benutzer: Rechte des Ordners "choices" (wieder) setzen - das Zuruecksetzen
+# der Rechte oben hat sie bei lokaler Konfiguration auf die des Konfigurationsordners gestellt
+if ($configOk) {
+    try {
+        $choiceDir = Get-WpeChoiceDirectory $ConfigPath
+        if ((Test-Path -LiteralPath $choiceDir) -or [bool](Read-WpeConfig -Path $ConfigPath).Settings.AllowUserPrinterChoice) {
+            Write-Step (Get-WpeText 'Install.ChoiceFolder' $choiceDir)
+            Initialize-WpeChoiceDirectory -ConfigPath $ConfigPath -Confirm:$false
+        }
+    } catch {
+        Write-Warn (Get-WpeText 'Install.ChoiceFolderFailed' $_.Exception.Message)
     }
 }
 

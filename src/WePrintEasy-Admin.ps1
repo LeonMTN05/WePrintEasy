@@ -597,7 +597,7 @@ $pnlTop.Controls.AddRange(@($btnAddUser, $btnAddGroup, $btnEdit, $btnRemove, $bt
 
 # Spaltennamen sind feste Kennungen (RowFilter); die Titel kommen aus den Sprachdateien
 $table = New-Object System.Data.DataTable
-foreach ($c in 'TypeKey', 'Type', 'Name', 'DisplayName', 'Printer', 'Priority', 'Comment', 'Modified', 'ModifiedBy', 'Sid') {
+foreach ($c in 'TypeKey', 'Type', 'Name', 'DisplayName', 'Printer', 'Priority', 'Source', 'Comment', 'Modified', 'ModifiedBy', 'Sid', 'ChangedByUser') {
     [void]$table.Columns.Add($c)
 }
 $grid = New-Grid $table
@@ -609,7 +609,11 @@ $grid.BringToFront()
 $grid.Add_DataBindingComplete({
         Set-GridColumns $grid @{
             Type = @('Admin.ColType', 50); Name = @('Admin.ColName', 90); DisplayName = @('Admin.ColDisplayName', 120); Printer = @('Admin.ColPrinter', 170)
-            Priority = @('Admin.ColPriority', 45); Comment = @('Admin.ColComment', 120); Modified = @('Admin.ColModified', 90); ModifiedBy = @('Admin.ColModifiedBy', 90)
+            Priority = @('Admin.ColPriority', 45); Source = @('Admin.ColSource', 150); Comment = @('Admin.ColComment', 100); Modified = @('Admin.ColModified', 90); ModifiedBy = @('Admin.ColModifiedBy', 90)
+        }
+        # Vom Benutzer selbst gewaehlte Drucker hervorheben
+        foreach ($r in $grid.Rows) {
+            if ([string]$r.DataBoundItem.Row['ChangedByUser'] -eq '1') { $r.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 246, 214) }
         }
     })
 
@@ -741,7 +745,14 @@ $tabSettings.Controls.Add($chkLegacy)
 $y += 35
 $chkConnect = New-Check (Get-WpeText 'Settings.Connect') 15 $y
 $tabSettings.Controls.Add($chkConnect)
-$y += 45
+$y += 35
+$chkUserChoice = New-Check (Get-WpeText 'Settings.UserChoice') 15 $y
+$tabSettings.Controls.Add($chkUserChoice)
+$y += 26
+$lblUserChoiceHint = New-WpeLabel (Get-WpeText 'Settings.UserChoiceHint') 35 $y 1040 36
+$lblUserChoiceHint.ForeColor = [System.Drawing.Color]::DimGray
+$tabSettings.Controls.Add($lblUserChoiceHint)
+$y += 50
 $tabSettings.Controls.Add((New-WpeLabel (Get-WpeText 'Settings.DefaultServer') 15 $y 260))
 $txtDefServer = New-Object System.Windows.Forms.TextBox
 $txtDefServer.Location = New-Object System.Drawing.Point(280, $y)
@@ -775,7 +786,8 @@ Add-WpeRichText $rtfHelp (Get-WpeGuideLines)
 
 function Update-All {
     try {
-        $script:Config = Read-WpeConfig -Path $script:ConfigPath
+        # Mit der Druckerwahl der Benutzer (wenn erlaubt) - so, wie sie in den Sitzungen gilt
+        $script:Config = Read-WpeEffectiveConfig -Path $script:ConfigPath
     } catch {
         Show-WpeMessage $_.Exception.Message 'Error'
         return
@@ -783,7 +795,9 @@ function Update-All {
     $table.Rows.Clear()
     foreach ($a in ($script:Config.Assignments | Sort-Object -Property @{ Expression = { $_.Type -eq 'Group' } }, Priority, Name)) {
         $prio = if ($a.Type -eq 'Group') { [string]$a.Priority } else { '' }
-        [void]$table.Rows.Add($a.Type, (Get-TypeLabel $a.Type), $a.Name, $a.DisplayName, $a.Printer, $prio, $a.Comment, $a.ModifiedAt, $a.ModifiedBy, $a.Sid)
+        $byUser = Test-WpeChangedByUser $a
+        $source = if (-not $byUser) { Get-WpeText 'Admin.SourceAdmin' } elseif ($a.PreviousPrinter) { Get-WpeText 'Admin.SourceUserPrevious' $a.PreviousPrinter } else { Get-WpeText 'Admin.SourceUser' }
+        [void]$table.Rows.Add($a.Type, (Get-TypeLabel $a.Type), $a.Name, $a.DisplayName, $a.Printer, $prio, $source, $a.Comment, $a.ModifiedAt, $a.ModifiedBy, $a.Sid, $(if ($byUser) { '1' } else { '' }))
     }
     Update-Filter
 
@@ -806,7 +820,7 @@ function Update-Filter {
     $t = $txtFilter.Text.Trim()
     if ($t) {
         $v = ConvertTo-RowFilterValue $t
-        $table.DefaultView.RowFilter = "Name LIKE '*$v*' OR DisplayName LIKE '*$v*' OR Printer LIKE '*$v*' OR Comment LIKE '*$v*'"
+        $table.DefaultView.RowFilter = "Name LIKE '*$v*' OR DisplayName LIKE '*$v*' OR Printer LIKE '*$v*' OR Comment LIKE '*$v*' OR Source LIKE '*$v*'"
     } else {
         $table.DefaultView.RowFilter = ''
     }
@@ -1024,7 +1038,7 @@ $doTest = {
             $u = @(Find-WpeAdObject -Type User -SearchText $name -Exact) | Select-Object -First 1
             if (-not $u) { $txtTestResult.Text = Get-WpeText 'Force.UserNotFound' $name; return }
             $groupSids = @(Get-WpeAdUserGroupSids -UserSid $u.Sid)
-            $config = Read-WpeConfig -Path $script:ConfigPath
+            $config = Read-WpeEffectiveConfig -Path $script:ConfigPath -UserSid $u.Sid
             $hit = Resolve-WpeAssignment -Config $config -UserSid $u.Sid -UserName $u.Name -GroupSids $groupSids
 
             [void]$lines.Add((Get-WpeText 'Admin.ResultUser' $u.Name $u.DisplayName))
@@ -1032,7 +1046,8 @@ $doTest = {
             [void]$lines.Add((Get-WpeText 'Admin.ResultGroups' $groupSids.Count))
             [void]$lines.Add('')
             if ($hit) {
-                $via = if ($hit.Type -eq 'User') { Get-WpeText 'Admin.ResultViaUser' } else { Get-WpeText 'Admin.ResultViaGroup' $hit.Name $hit.Priority }
+                $via = if (Test-WpeChangedByUser $hit) { Get-WpeText 'Admin.ResultViaChoice' $hit.ModifiedAt }
+                elseif ($hit.Type -eq 'User') { Get-WpeText 'Admin.ResultViaUser' } else { Get-WpeText 'Admin.ResultViaGroup' $hit.Name $hit.Priority }
                 [void]$lines.Add((Get-WpeText 'Admin.ResultPrinter' $hit.Printer))
                 [void]$lines.Add((Get-WpeText 'Admin.ResultVia' $via))
             } else {
@@ -1079,6 +1094,10 @@ $btnFix.Add_Click({
                     Enable-ScheduledTask -TaskPath '\WePrintEasy\' -TaskName 'WePrintEasy Agent' | Out-Null
                     Show-WpeMessage (Get-WpeText 'Admin.FixTaskDone')
                 }
+                'ChoiceFolder' {
+                    Initialize-WpeChoiceDirectory -ConfigPath $script:ConfigPath -Confirm:$false
+                    Show-WpeMessage (Get-WpeText 'Admin.FixChoiceDone' (Get-WpeChoiceDirectory $script:ConfigPath))
+                }
                 'Install' { Show-WpeMessage (Get-WpeText 'Admin.FixInstall') }
                 default { Show-WpeMessage (Get-WpeText 'Admin.FixNone') }
             }
@@ -1116,6 +1135,7 @@ function Update-SettingsTab {
     $chkEnforce.Checked = [bool]$s.EnforceDuringSession
     $chkLegacy.Checked = [bool]$s.SetLegacyDefaultPrinterMode
     $chkConnect.Checked = [bool]$s.ConnectNetworkPrinters
+    $chkUserChoice.Checked = [bool]$s.AllowUserPrinterChoice
     $txtDefServer.Text = [string]$s.DefaultPrintServer
     # Angezeigt wird die Sprache, in der das Programm gerade läuft
     $cboLanguage.SelectedIndex = [Math]::Max(0, [array]::IndexOf($script:LanguageCodes, (Get-WpeLanguage)))
@@ -1135,12 +1155,21 @@ $btnSaveSettings.Add_Click({
             $cfg.Settings.EnforceDurationMinutes = [int]$numDuration.Value
             $cfg.Settings.SetLegacyDefaultPrinterMode = $chkLegacy.Checked
             $cfg.Settings.ConnectNetworkPrinters = $chkConnect.Checked
+            $cfg.Settings.AllowUserPrinterChoice = $chkUserChoice.Checked
             $cfg.Settings.DefaultPrintServer = $txtDefServer.Text.Trim().TrimStart('\')
             $cfg.Settings.Language = $newLanguage
             Save-WpeConfig -Config $cfg -Path $script:ConfigPath -Confirm:$false
         } catch {
             Show-WpeMessage (Get-WpeText 'Common.SaveFailed' $_.Exception.Message) 'Error'
             return
+        }
+        # Ordner, in dem die Benutzer ihre Wahl speichern (nur eigene Datei schreibbar)
+        if ($chkUserChoice.Checked) {
+            try {
+                Initialize-WpeChoiceDirectory -ConfigPath $script:ConfigPath -Confirm:$false
+            } catch {
+                Show-WpeMessage (Get-WpeText 'Settings.UserChoiceFolderFailed' (Get-WpeChoiceDirectory $script:ConfigPath) $_.Exception.Message) 'Warning'
+            }
         }
         if ($newLanguage -eq $oldLanguage) {
             Update-All

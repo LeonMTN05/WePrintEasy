@@ -8,7 +8,7 @@
 Set at every logon – and, if you like, kept in place for the entire session.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.8-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.9-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-requirements)
@@ -38,6 +38,7 @@ or AD group – and makes sure it stays that way.
 - 🖨️ **Printer list from your file server** – load all shared printers with one click and install missing drivers right away
 - 🧙 **Graphical setup wizard** – installed in about 2 minutes, updated with a double-click
 - ⚡ **"Enforce now (live)"** – sets the printer immediately in a user's session and shows every step
+- 🖱️ **Optional: users choose themselves** – icon in the notification area, the choice replaces their assignment and is visible in printer management
 - 🩺 **Health check with traffic lights** – finds configuration problems and fixes them at the push of a button
 - 🏢 **Ready for RDS farms** – one central configuration for any number of terminal servers
 - 🔏 **Optionally signed** (Authenticode, `AllSigned`) – fewer false alarms from virus scanners
@@ -79,7 +80,7 @@ or AD group – and makes sure it stays that way.
 | **Operating system** | Windows Server 2025, 2022 or 2019 with the Remote Desktop Session Host role |
 | **Runtime** | Windows PowerShell 5.1 (included with Windows) |
 | **Active Directory** | The server is a domain member – no RSAT, no schema extension |
-| **Permissions** | Administrator for the installation; users only need read access to the configuration |
+| **Permissions** | Administrator for the installation; users only need read access to the configuration (with [printer choice by users](#️-printer-choice-by-users): create files in the `choices` folder) |
 
 ## 🚀 Quick start
 
@@ -116,7 +117,7 @@ Alternative to the ZIP: a single `.exe` with an entry under **Apps / Programs an
 
 ```powershell
 # Unattended (exit code 0 = success, 10 = failed, log: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.8.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.9.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -344,6 +345,7 @@ agent in your own session.
 | Connect network printers automatically | on | missing `\\server\share` printers are connected |
 | Default print server | – | Pre-filled in the assignment dialog |
 | Language | as chosen during setup | see [Language](#-language) |
+| Users may choose their default printer themselves | off | icon in the session's notification area, see [Printer choice by users](#️-printer-choice-by-users) |
 
 Changes to assignments and settings are **applied automatically** by running sessions (at the latest
 after one check interval) – no need to log on again. Only changed **group memberships** in AD take
@@ -352,6 +354,30 @@ effect after the next logon.
 > [!TIP]
 > If users should be allowed to change their default printer themselves during the session, turn off
 > "Monitor during the session". The printer is then only set at logon.
+> If their own choice should stick, turn on [printer choice by users](#️-printer-choice-by-users) instead.
+
+### 🖱️ Printer choice by users
+
+With **Settings → "Users may choose their default printer themselves"** (default: off), every session gets a
+WePrintEasy icon in the notification area. Clicking it opens a small window with the session's printers –
+select a printer, **Set as default printer**, done. Users cannot change anything else there.
+
+- The choice applies **right away and at every logon** and is kept in place by the agent like an assignment.
+- It **replaces the user's assignment** (including a direct user assignment) and is listed in printer
+  management under **Assignments** with the source **"Chosen by user (previously: …)"** (highlighted in yellow).
+- If the administrator changes or removes that assignment, their setting applies again – until the user chooses again.
+- Redirected printers (`… (redirected 3)`) are stored without the session number and are found again in the next session.
+- Turning it off: the icon disappears within 30 seconds and the assignments apply again.
+  Stored choices are kept and apply again when the setting is turned back on.
+
+Each user's choice is stored in `choices\<SID>.json` next to the configuration – `config.json` stays
+read-only for users. In the `choices` folder, *Authenticated Users* may only create files and *CREATOR OWNER*
+may only change their own file; a file that does not belong to the user it is named after is ignored. Printer
+management sets these permissions when the setting is saved (as do setup and update; the health check verifies them).
+
+> [!IMPORTANT]
+> With a **central configuration** (`\\fs01\WePrintEasy$`), users need the **Change** permission on the
+> **share** (instead of Read). The NTFS permissions limit writing to the `choices` folder and their own file.
 
 ### 🌐 Language
 
@@ -442,6 +468,7 @@ Install-WePrintEasy.ps1         Installation / update from the command line (e.g
 Uninstall-WePrintEasy.ps1       Uninstallation
 src\WePrintEasy-Admin.ps1       Management program (graphical)
 src\WePrintEasy-Agent.ps1       Logon agent (runs in the context of each user)
+src\WePrintEasy-Tray.ps1        Notification area icon for printer choice by users (started by the agent)
 src\WePrintEasy.psm1            Shared module (also usable in scripts)
 src\WePrintEasy.Gui.ps1         Shared user interface building blocks
 src\WePrintEasy.Strings.*.psd1  Texts per language (en = English, de = German)

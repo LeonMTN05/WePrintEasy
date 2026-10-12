@@ -111,7 +111,7 @@ Invoke-Section '2. Installation per Kommandozeile' {
 & (Join-Path $root 'Install-WePrintEasy.ps1') -PrintServer $server -ImportPrinters All -DisableClientDefaultPrinter -Language en *>&1 | Out-File (Join-Path $OutDir 'install-cli.log') -Encoding utf8
 Get-Content (Join-Path $OutDir 'install-cli.log') | ForEach-Object { Write-Host "    | $_" }
 $script:cfgPath = Get-WpeConfigPath
-Assert 'Programmdateien installiert (inkl. Sprachdateien und Symbol)' { @('WePrintEasy.psm1', 'WePrintEasy.Gui.ps1', 'WePrintEasy-Agent.ps1', 'WePrintEasy-Admin.ps1', 'WePrintEasy-Admin.cmd', 'WePrintEasy.Strings.en.psd1', 'WePrintEasy.Strings.de.psd1', 'WePrintEasy.ico' | Where-Object { Test-Path (Join-Path $installDir $_) }).Count -eq 8 }
+Assert 'Programmdateien installiert (inkl. Sprachdateien und Symbol)' { @('WePrintEasy.psm1', 'WePrintEasy.Gui.ps1', 'WePrintEasy-Agent.ps1', 'WePrintEasy-Admin.ps1', 'WePrintEasy-Admin.cmd', 'WePrintEasy-Tray.ps1', 'WePrintEasy.Strings.en.psd1', 'WePrintEasy.Strings.de.psd1', 'WePrintEasy.ico' | Where-Object { Test-Path (Join-Path $installDir $_) }).Count -eq 9 }
 Assert 'Lizenz liegt der Installation bei' { Test-Path (Join-Path $installDir 'LICENSE') }
 Assert 'Registry: ConfigPath gesetzt' { $cfgPath -eq (Join-Path $env:ProgramData 'WePrintEasy\config.json') }
 $task = Get-ScheduledTask -TaskPath '\WePrintEasy\' -TaskName 'WePrintEasy Agent' -ErrorAction SilentlyContinue
@@ -156,7 +156,7 @@ Get-Content (Join-Path $OutDir 'install-signed.log') | ForEach-Object { Write-Ho
 $reg = Get-ItemProperty 'HKLM:\SOFTWARE\WePrintEasy'
 $script:signThumb = [string]$reg.SigningThumbprint
 $sigs = @(Get-WpeSignatureStatus -InstallPath $installDir)
-Assert 'Signatur: alle 4 Skripte gueltig signiert' { $sigs.Count -eq 4 -and @($sigs | Where-Object Status -ne 'Valid').Count -eq 0 }
+Assert 'Signatur: alle 5 Skripte gueltig signiert' { $sigs.Count -eq 5 -and @($sigs | Where-Object Status -ne 'Valid').Count -eq 0 }
 Assert 'Registry: AllSigned, selbst erstelltes Zertifikat' { $reg.ExecutionPolicy -eq 'AllSigned' -and $reg.SigningCertCreated -eq 1 -and $signThumb }
 Assert 'Zertifikat vertrauenswuerdig (Root + TrustedPublisher)' { (Test-Path "Cert:\LocalMachine\Root\$signThumb") -and (Test-Path "Cert:\LocalMachine\TrustedPublisher\$signThumb") }
 $task = Get-ScheduledTask -TaskPath '\WePrintEasy\' -TaskName 'WePrintEasy Agent'

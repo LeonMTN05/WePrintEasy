@@ -8,7 +8,7 @@
 Gesetzt bei jeder Anmeldung – und auf Wunsch festgehalten während der ganzen Sitzung.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.8-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.9-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-systemvoraussetzungen)
@@ -38,6 +38,7 @@ Standarddrucker fest – und sorgt dafür, dass er es auch bleibt.
 - 🖨️ **Druckerliste vom Fileserver** – alle Freigaben mit einem Klick laden, fehlende Treiber gleich mitinstallieren
 - 🧙 **Grafischer Setup-Assistent** – Installation in ca. 2 Minuten, Update per Doppelklick
 - ⚡ **„Erzwingen (live)“** – setzt den Drucker sofort in der Sitzung eines Benutzers und zeigt jeden Schritt
+- 🖱️ **Optional: Benutzer wählen selbst** – Symbol im Infobereich, die Wahl ersetzt ihre Zuweisung und ist in der Verwaltung sichtbar
 - 🩺 **Systemprüfung mit Ampel** – findet Konfigurationsfehler und behebt sie auf Knopfdruck
 - 🏢 **RDS-Farm-tauglich** – eine zentrale Konfiguration für beliebig viele Terminalserver
 - 🔏 **Optional signiert** (Authenticode, `AllSigned`) – weniger Fehlalarme von Virenscannern
@@ -79,7 +80,7 @@ Standarddrucker fest – und sorgt dafür, dass er es auch bleibt.
 | **Betriebssystem** | Windows Server 2025, 2022 oder 2019 mit Remotedesktop-Sitzungshost |
 | **Laufzeit** | Windows PowerShell 5.1 (bei Windows dabei) |
 | **Active Directory** | Server ist Domänenmitglied – kein RSAT, keine Schemaerweiterung |
-| **Rechte** | Administrator für die Installation; Benutzer brauchen nur Leserechte auf die Konfiguration |
+| **Rechte** | Administrator für die Installation; Benutzer brauchen nur Leserechte auf die Konfiguration (mit [Druckerwahl durch Benutzer](#️-druckerwahl-durch-benutzer): Anlegen im Ordner `choices`) |
 
 ## 🚀 Schnellstart
 
@@ -116,7 +117,7 @@ Alternative zum ZIP: eine einzelne `.exe` mit Eintrag unter **Apps / Programme u
 
 ```powershell
 # Unbeaufsichtigt (Rückgabewert 0 = erfolgreich, 10 = fehlgeschlagen, Protokoll: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.8.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.9.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -346,6 +347,7 @@ die RDS-Richtlinie. **Agent jetzt für mich ausführen** testet den Agenten in d
 | Netzwerkdrucker automatisch verbinden | an | fehlende `\\server\freigabe`-Drucker werden verbunden |
 | Standard-Druckserver | – | Vorbelegung im Zuweisungsdialog |
 | Sprache | wie beim Setup gewählt | siehe [Sprache](#-sprache) |
+| Benutzer dürfen ihren Standarddrucker selbst wählen | aus | Symbol im Infobereich der Sitzung, siehe [Druckerwahl durch Benutzer](#️-druckerwahl-durch-benutzer) |
 
 Änderungen an Zuweisungen und Einstellungen werden von laufenden Sitzungen
 **automatisch übernommen** (spätestens nach einem Prüfintervall) – eine Neuanmeldung ist nicht nötig.
@@ -354,6 +356,30 @@ Nur geänderte **Gruppenmitgliedschaften** im AD greifen erst nach erneuter Anme
 > [!TIP]
 > Soll ein Benutzer seinen Standarddrucker während der Sitzung selbst ändern dürfen,
 > „Während der Sitzung überwachen“ abschalten. Dann wird nur bei der Anmeldung gesetzt.
+> Soll die eigene Wahl dauerhaft gelten, stattdessen die [Druckerwahl durch Benutzer](#️-druckerwahl-durch-benutzer) einschalten.
+
+### 🖱️ Druckerwahl durch Benutzer
+
+Unter **Einstellungen → „Benutzer dürfen ihren Standarddrucker selbst wählen“** (Standard: aus) bekommt
+jede Sitzung ein WePrintEasy-Symbol im Infobereich. Ein Klick öffnet ein kleines Fenster mit den Druckern
+der Sitzung – Drucker markieren, **Als Standarddrucker festlegen**, fertig. Mehr können Benutzer dort nicht einstellen.
+
+- Die Wahl gilt **sofort und bei jeder Anmeldung** und wird vom Agenten wie eine Zuweisung festgehalten.
+- Sie **ersetzt die Zuweisung** des Benutzers (auch eine direkte Benutzerzuweisung) und steht in der
+  Druckerverwaltung unter **Zuweisungen** mit der Quelle **„Vom Benutzer gewählt (vorher: …)“** (gelb hinterlegt).
+- Ändert oder entfernt der Administrator diese Zuweisung, gilt wieder seine Vorgabe – bis der Benutzer erneut wählt.
+- Umgeleitete Drucker (`… (umgeleitet 3)`) werden ohne Sitzungsnummer gespeichert und auch in der nächsten Sitzung gefunden.
+- Ausschalten: Das Symbol verschwindet nach spätestens 30 Sekunden, es gelten wieder die Zuweisungen.
+  Die gespeicherten Wahlen bleiben erhalten und gelten beim erneuten Einschalten wieder.
+
+Gespeichert wird je Benutzer in `choices\<SID>.json` neben der Konfiguration – die `config.json` bleibt
+für Benutzer schreibgeschützt. Im Ordner `choices` dürfen *Authentifizierte Benutzer* nur Dateien anlegen,
+*ERSTELLER-BESITZER* ändert nur die eigene Datei; eine Datei, die nicht dem Benutzer ihres Namens gehört,
+wird nicht beachtet. Die Rechte setzt die Verwaltung beim Speichern der Einstellung (und Setup/Update, die Systemprüfung prüft sie).
+
+> [!IMPORTANT]
+> Bei **zentraler Konfiguration** (`\\fs01\WePrintEasy$`) brauchen Benutzer auf der **Freigabe** das Recht
+> **Ändern** (statt Lesen). Die NTFS-Rechte begrenzen das Schreiben auf den Ordner `choices` und die eigene Datei.
 
 ### 🌐 Sprache
 
@@ -444,6 +470,7 @@ Install-WePrintEasy.ps1         Installation / Update per Kommandozeile (z. B. f
 Uninstall-WePrintEasy.ps1       Deinstallation
 src\WePrintEasy-Admin.ps1       Verwaltungsprogramm (grafisch)
 src\WePrintEasy-Agent.ps1       Anmelde-Agent (läuft im Kontext jedes Benutzers)
+src\WePrintEasy-Tray.ps1        Symbol im Infobereich für die Druckerwahl durch Benutzer (startet der Agent)
 src\WePrintEasy.psm1            Gemeinsames Modul (auch für Skripte nutzbar)
 src\WePrintEasy.Gui.ps1         Gemeinsame Oberflächen-Bausteine
 src\WePrintEasy.Strings.*.psd1  Texte je Sprache (en = Englisch, de = Deutsch)

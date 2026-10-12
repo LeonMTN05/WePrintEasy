@@ -200,6 +200,92 @@ Group;Lager;\\srv\Lager;20
     $state4 = New-WpeAgentState -ConfigPath $agentCfg -UserSid 'S-1' -UserName 'x' -Log { param($m, $l) [void]$problemLines.Add("[$l] $m") }
     Assert 'Write-WpeAgentProblem ist exportiert (Agent-catch)' { Write-WpeAgentProblem $state4 'Fehler: Test'; Write-WpeAgentProblem $state4 'Fehler: Test'; $problemLines.Count -eq 1 -and $problemLines[0] -eq '[WARN] Fehler: Test' }
 
+    Write-Host 'Druckerwahl durch Benutzer'
+    Assert 'Einstellung AllowUserPrinterChoice: Standard aus' { (Read-WpeConfig -Path (Join-Path $tmp 'neu.json')).Settings.AllowUserPrinterChoice -eq $false }
+    $p = ConvertTo-WpeChoicePattern 'HP LaserJet (umgeleitet 3)'
+    Assert 'Umgeleiteter Drucker: Sitzungsnummer wird Platzhalter' { $p -eq 'HP LaserJet (umgeleitet *)' -and (Test-WpePrinterMatch $p 'HP LaserJet (umgeleitet 7)') -and -not (Test-WpePrinterMatch $p 'HP LaserJet 2 (umgeleitet 7)') }
+    Assert 'Aeltere Schreibweise "in Sitzung N"' { Test-WpePrinterMatch (ConvertTo-WpeChoicePattern 'Canon (von PC01) in Sitzung 4') 'Canon (von PC01) in Sitzung 12' }
+    $p = ConvertTo-WpeChoicePattern 'Drucker [EG] (redirected 2)'
+    Assert 'Klammern im Namen werden maskiert' { (Test-WpePrinterMatch $p 'Drucker [EG] (redirected 5)') -and -not (Test-WpePrinterMatch $p 'Drucker E (redirected 5)') }
+    Assert 'Netzwerk- und lokale Drucker bleiben unveraendert' { (ConvertTo-WpeChoicePattern '\\fs01\HP-1') -eq '\\fs01\HP-1' -and (ConvertTo-WpeChoicePattern 'Microsoft Print to PDF') -eq 'Microsoft Print to PDF' }
+
+    $choiceCfg = Join-Path $tmp 'choice\config.json'
+    $mySid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    Set-WpeAssignment -Type User -Name 'ich' -Sid $mySid -DisplayName 'Ich selbst' -Printer '\\fs01\Admin-Vorgabe' -Comment 'Buero 1' -ConfigPath $choiceCfg -SkipSidLookup | Out-Null
+    Set-WpeAssignment -Type Group -Name 'Alle' -Sid 'S-1-5-21-9-9-9-2002' -Printer '\\fs01\Flur' -ConfigPath $choiceCfg -SkipSidLookup | Out-Null
+    Assert 'Speichern ohne Ordner choices: verstaendlicher Fehler' { try { Save-WpeUserChoice -PrinterName 'X' -ConfigPath $choiceCfg -Confirm:$false; $false } catch { $_.Exception.Message -like '*choices*' } }
+    Assert 'Systempruefung: ausgeschaltet keine Pruefung des Ordners' { -not (@(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoice') }
+    $c = Read-WpeConfig -Path $choiceCfg; $c.Settings.AllowUserPrinterChoice = $true; Save-WpeConfig -Config $c -Path $choiceCfg
+    Assert 'Systempruefung: Ordner fehlt -> Fehler mit Behebung' { $r = @(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoice'; $r.Status -eq 'Error' -and $r.Fix -eq 'ChoiceFolder' }
+    Initialize-WpeChoiceDirectory -ConfigPath $choiceCfg -Confirm:$false
+    Initialize-WpeChoiceDirectory -ConfigPath $choiceCfg -Confirm:$false
+    $choiceDir = Get-WpeChoiceDirectory $choiceCfg
+    Assert 'Ordner choices neben der Konfiguration, Rechte gesetzt (auch zweimal)' { $choiceDir -eq (Join-Path $tmp 'choice\choices') -and (Test-WpeChoiceDirectory -ConfigPath $choiceCfg).Status -eq 'OK' }
+    $acl = Get-Acl -LiteralPath $choiceDir
+    Assert 'Benutzer duerfen nur anlegen, ERSTELLER-BESITZER aendert die eigene Datei' {
+        $rules = @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))
+        @($rules | Where-Object { $_.IdentityReference.Value -eq 'S-1-5-11' -and $_.InheritanceFlags -eq 'None' -and -not ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Delete) }).Count -eq 1 -and
+        @($rules | Where-Object { $_.IdentityReference.Value -eq 'S-1-3-0' -and $_.PropagationFlags -eq 'InheritOnly' }).Count -eq 1
+    }
+
+    $pattern = Save-WpeUserChoice -PrinterName 'Client-Drucker (umgeleitet 2)' -ConfigPath $choiceCfg -Confirm:$false
+    $own = @(Read-WpeUserChoice -ConfigPath $choiceCfg -UserSid $mySid)
+    Assert 'Eigene Wahl gespeichert und gelesen (als Platzhalter)' { $pattern -eq 'Client-Drucker (umgeleitet *)' -and $own.Count -eq 1 -and $own[0].Printer -eq $pattern -and $own[0].PrinterName -eq 'Client-Drucker (umgeleitet 2)' -and $own[0].Account -eq (Get-WpeCurrentAccount) }
+    Assert 'Datei ist UTF-8 ohne BOM' { $b = [IO.File]::ReadAllBytes((Join-Path $choiceDir "$mySid.json")); -not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB) }
+    # Fremde Datei: Name mit anderer SID, Besitzer ist dieser Benutzer - darf nicht gelten
+    $foreign = Join-Path $choiceDir 'S-1-5-21-9-9-9-666.json'
+    [IO.File]::WriteAllText($foreign, '{ "Sid": "S-1-5-21-9-9-9-666", "Name": "opfer", "Printer": "\\\\boese\\Drucker" }')
+    $fa = Get-Acl -LiteralPath $foreign; $fa.SetOwner((New-Object System.Security.Principal.SecurityIdentifier($mySid))); Set-Acl -LiteralPath $foreign -AclObject $fa
+    [IO.File]::WriteAllText((Join-Path $choiceDir 'S-1-5-21-9-9-9-667.json'), '{ kaputt')
+    $all = @(Read-WpeUserChoice -ConfigPath $choiceCfg)
+    Assert 'Fremde und defekte Dateien werden nicht beachtet' { $all.Count -eq 1 -and $all[0].Sid -eq $mySid }
+    Assert 'Systempruefung warnt vor fremder Datei' { $r = @(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoice'; $r.Status -eq 'Warning' -and $r.Detail -like '*S-1-5-21-9-9-9-666.json*' }
+    Remove-Item -LiteralPath $foreign, (Join-Path $choiceDir 'S-1-5-21-9-9-9-667.json')
+    Assert 'Systempruefung: Ordner in Ordnung' { $r = @(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoice'; $r.Status -eq 'OK' -and $r.Detail -like '*1*' }
+
+    $eff = Read-WpeEffectiveConfig -Path $choiceCfg
+    $mine = @($eff.Assignments | Where-Object { $_.Type -eq 'User' -and $_.Sid -eq $mySid })
+    Assert 'Wahl ersetzt die Benutzerzuweisung (kein Doppel)' { $mine.Count -eq 1 -and $mine[0].Printer -eq $pattern -and $eff.Assignments.Count -eq 2 }
+    Assert 'Ersetzte Zuweisung: Vermerk, vorheriger Drucker, Name/Anzeigename/Kommentar bleiben' { (Test-WpeChangedByUser $mine[0]) -and $mine[0].PreviousPrinter -eq '\\fs01\Admin-Vorgabe' -and $mine[0].Name -eq 'ich' -and $mine[0].DisplayName -eq 'Ich selbst' -and $mine[0].Comment -eq 'Buero 1' -and $mine[0].ModifiedBy -eq (Get-WpeCurrentAccount) }
+    Assert 'Gruppenzuweisung unveraendert, ohne Vermerk' { -not (Test-WpeChangedByUser ($eff.Assignments | Where-Object Type -eq 'Group')) }
+    Assert 'Die Datei config.json bleibt unveraendert' { (Read-WpeConfig -Path $choiceCfg).Assignments | Where-Object { $_.Sid -eq $mySid -and $_.Printer -eq '\\fs01\Admin-Vorgabe' } }
+    Assert 'Aufloesung: Wahl schlaegt Benutzerzuweisung' { (Resolve-WpeAssignment -Config $eff -UserSid $mySid -UserName 'ich' -GroupSids @('S-1-5-21-9-9-9-2002')).Printer -eq $pattern }
+    $nameOnly = Read-WpeConfig -Path $choiceCfg
+    [void]$nameOnly.Assignments.Add((New-WpeAssignmentObject -Type User -Name 'ich' -Printer 'NurName'))
+    Assert 'Aufloesung: Wahl schlaegt auch Zuweisung ohne SID' { (Resolve-WpeAssignment -Config (Merge-WpeUserChoice -Config $nameOnly -Choices $own) -UserSid $mySid -UserName 'ich' -GroupSids @()).Printer -eq $pattern }
+    Assert 'Wahl ohne Zuweisung kommt als Benutzerzuweisung hinzu' { $m = Merge-WpeUserChoice -Config (Read-WpeConfig -Path (Join-Path $tmp 'leer.json')) -Choices $own; $m.Assignments.Count -eq 1 -and $m.Assignments[0].Name -eq $env:USERNAME -and $m.Assignments[0].PreviousPrinter -eq '' }
+    Assert 'Get-WpeAssignment zeigt die Wahl' { (Get-WpeAssignment -Type User -ConfigPath $choiceCfg).Printer -eq $pattern }
+    Assert '"Benutzer pruefen" fuer einen Benutzer (-UserSid)' { @((Read-WpeEffectiveConfig -Path $choiceCfg -UserSid 'S-1-5-21-9-9-9-1').Assignments | Where-Object { Test-WpeChangedByUser $_ }).Count -eq 0 }
+
+    $agentChoiceLines = New-Object System.Collections.ArrayList
+    $stateC = New-WpeAgentState -ConfigPath $choiceCfg -UserSid $mySid -UserName 'ich' -GroupSids @() -Log { param($m, $l) [void]$agentChoiceLines.Add($m) }
+    Update-WpeAgentConfig -State $stateC
+    Assert 'Agent: eigene Wahl ist die Vorgabe (Protokoll nennt sie)' { $stateC.Target.Printer -eq $pattern -and ($agentChoiceLines -join "`n") -like "*$(Get-WpeText 'Agent.ViaChoice')*" }
+    & $mod { $script:FakeDefault = 'Microsoft Print to PDF' }
+    Assert 'Agent setzt den gewaehlten umgeleiteten Drucker' { (Invoke-WpeAgentCheck -State $stateC) -eq 'Set' -and (& $mod { $script:FakeDefault }) -eq 'Client-Drucker (umgeleitet 2)' }
+    Start-Sleep -Milliseconds 20
+    [void](Save-WpeUserChoice -PrinterName 'Microsoft Print to PDF' -ConfigPath $choiceCfg -Confirm:$false)
+    Update-WpeAgentConfig -State $stateC
+    Assert 'Agent: neue Wahl wird live uebernommen' { $stateC.Target.Printer -eq 'Microsoft Print to PDF' }
+    $stateC.ForceReload = $true
+    $agentChoiceLines.Clear()
+    Update-WpeAgentConfig -State $stateC
+    Assert 'Agent: ForceReload liest neu, ohne die Vorgabe erneut zu protokollieren' { -not $stateC.ForceReload -and $agentChoiceLines.Count -eq 0 }
+    $c = Read-WpeConfig -Path $choiceCfg; $c.Settings.AllowUserPrinterChoice = $false; Save-WpeConfig -Config $c -Path $choiceCfg
+    Update-WpeAgentConfig -State $stateC
+    Assert 'Ausgeschaltet: wieder die Vorgabe des Administrators' { $stateC.Target.Printer -eq '\\fs01\Admin-Vorgabe' -and (Test-Path -LiteralPath (Join-Path $choiceDir "$mySid.json")) }
+    $c.Settings.AllowUserPrinterChoice = $true; Save-WpeConfig -Config $c -Path $choiceCfg
+
+    Set-WpeAssignment -Type User -Name 'ich' -Sid $mySid -Printer '\\fs01\Neu-vom-Admin' -ConfigPath $choiceCfg -SkipSidLookup | Out-Null
+    Assert 'Aenderung durch den Administrator ersetzt die Wahl (Datei entfernt)' { -not (Test-Path -LiteralPath (Join-Path $choiceDir "$mySid.json")) -and (Get-WpeAssignment -Type User -ConfigPath $choiceCfg).Printer -eq '\\fs01\Neu-vom-Admin' }
+    [void](Save-WpeUserChoice -PrinterName 'Microsoft Print to PDF' -ConfigPath $choiceCfg -Confirm:$false)
+    Remove-WpeAssignment -Type User -Name 'ich' -Sid $mySid -ConfigPath $choiceCfg -Confirm:$false
+    Assert 'Entfernen loescht Zuweisung und Wahl' { -not (Test-Path -LiteralPath (Join-Path $choiceDir "$mySid.json")) -and @(Get-WpeAssignment -Type User -ConfigPath $choiceCfg).Count -eq 0 }
+    [void](Save-WpeUserChoice -PrinterName 'Microsoft Print to PDF' -ConfigPath $choiceCfg -Confirm:$false)
+    $warn = $null
+    Remove-WpeAssignment -Type User -Name 'ich' -Sid $mySid -ConfigPath $choiceCfg -Confirm:$false -WarningVariable warn -WarningAction SilentlyContinue
+    Assert 'Entfernen einer reinen Wahl (ohne Zuweisung): ohne Warnung' { -not $warn -and -not (Test-Path -LiteralPath (Join-Path $choiceDir "$mySid.json")) }
+
     Write-Host 'Agent-Zeitsteuerung'
     $s = [pscustomobject](Get-WpeDefaultSettings)
     Assert 'Anmeldephase: alle 3 s' { (Get-WpeAgentSleepSeconds -Settings $s -ElapsedSeconds 10) -eq 3 }

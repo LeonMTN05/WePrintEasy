@@ -22,6 +22,9 @@
     Aenderungen an der Konfiguration werden waehrend der Sitzung automatisch
     uebernommen. Protokoll: %LOCALAPPDATA%\WePrintEasy\agent.log
 
+    Ist "Benutzer duerfen ihren Standarddrucker selbst waehlen" eingeschaltet,
+    startet der Agent dazu das Symbol im Infobereich (WePrintEasy-Tray.ps1).
+
 .PARAMETER Once
     Nur einmal pruefen/setzen und sofort beenden (zum Testen).
 
@@ -58,14 +61,18 @@ $log = {
 # --- Nur eine Instanz pro Sitzung ---------------------------------------------
 # Ein zweiter Aufruf weckt die laufende Instanz (Anmeldephase neu starten).
 $wake = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\WePrintEasy.Agent.Wake')
+# Der Benutzer hat im Infobereich einen Drucker gewaehlt: sofort neu lesen (ohne neue Anmeldephase)
+$reload = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\WePrintEasy.Agent.Reload')
 $createdNew = $false
 $mutex = New-Object System.Threading.Mutex($true, 'Local\WePrintEasy.Agent', [ref]$createdNew)
 if (-not $createdNew -and -not $Once) {
     [void]$wake.Set()
     Write-Verbose (Get-WpeText 'Agent.AlreadyRunning')
-    $mutex.Dispose(); $wake.Dispose()
+    $mutex.Dispose(); $wake.Dispose(); $reload.Dispose()
     exit 0
 }
+$trayScript = Join-Path $PSScriptRoot 'WePrintEasy-Tray.ps1'
+$trayTried = [datetime]::MinValue
 
 try {
     if (-not $ConfigPath) { $ConfigPath = Get-WpeConfigPath }
@@ -116,11 +123,29 @@ try {
             Write-WpeAgentProblem $state (Get-WpeText 'Agent.Error' $_.Exception.Message)
             $sleep = Get-WpeAgentSleepSeconds -Settings ([pscustomobject](Get-WpeDefaultSettings)) -ElapsedSeconds $elapsed
         }
+        # Symbol fuer die Druckerwahl: starten, wenn erlaubt und noch nicht da (hoechstens alle 5 Minuten,
+        # falls es sofort wieder endet). Ausgeschaltet beendet es sich selbst.
+        try {
+            # Gerade (wieder) eingeschaltet: sofort starten
+            if (-not [bool]$settings.AllowUserPrinterChoice) { $trayTried = [datetime]::MinValue }
+            if ([bool]$settings.AllowUserPrinterChoice -and ((Get-Date) - $trayTried).TotalMinutes -ge 5 -and
+                (Test-Path -LiteralPath $trayScript) -and -not (Test-WpeTrayRunning)) {
+                $trayTried = Get-Date
+                Start-WpeTray -ScriptPath $trayScript -ConfigPath $ConfigPath -Confirm:$false
+                & $log (Get-WpeText 'Agent.TrayStarted') 'INFO'
+            }
+        } catch {
+            Write-WpeAgentProblem $state (Get-WpeText 'Agent.TrayFailed' $_.Exception.Message)
+        }
+
         if ($sleep -lt 0) { break }
 
-        if ($wake.WaitOne([TimeSpan]::FromSeconds($sleep))) {
+        $signal = [System.Threading.WaitHandle]::WaitAny([System.Threading.WaitHandle[]]@($wake, $reload), [TimeSpan]::FromSeconds($sleep))
+        if ($signal -eq 0) {
             & $log (Get-WpeText 'Agent.Reconnected') 'INFO'
             $start = Get-Date
+        } elseif ($signal -eq 1) {
+            $state.ForceReload = $true
         }
     }
     & $log (Get-WpeText 'Agent.Stopped') 'INFO'
@@ -128,4 +153,5 @@ try {
     if ($createdNew) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
     $wake.Dispose()
+    $reload.Dispose()
 }

@@ -57,6 +57,15 @@ foreach ($a in $agents) {
         $stopped += $a.ProcessId
     }
 }
+# Symbole fuer die Druckerwahl im Infobereich (beenden sich sonst erst, wenn ihre Datei fehlt)
+$trays = @()
+try { $trays = @(Get-WpeTrayProcess) } catch { Write-Warning (Get-WpeText 'Install.AgentsUnknown' $_.Exception.Message) }
+foreach ($t in $trays) {
+    if ($PSCmdlet.ShouldProcess((Get-WpeText 'Uninstall.Tray' $t.SessionId), (Get-WpeText 'Uninstall.Stop'))) {
+        Stop-Process -Id $t.ProcessId -Force -ErrorAction SilentlyContinue
+        $stopped += $t.ProcessId
+    }
+}
 # Stop-Process wartet nicht: Ein gerade startender Agent haelt WePrintEasy-Agent.ps1 sonst noch
 # offen, und das Loeschen des Programmordners scheitert
 if ($stopped) { Wait-Process -Id $stopped -Timeout 15 -ErrorAction SilentlyContinue }

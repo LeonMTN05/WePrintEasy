@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
     WePrintEasy - gemeinsames Modul
     Wird vom Verwaltungsprogramm (WePrintEasy-Admin.ps1) und vom
@@ -18,7 +18,7 @@ $script:PrinterRegKey    = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\W
 $script:ComputerDomain   = ''   # Zwischenspeicher fuer Get-WpeLdapPrefix
 
 # Version und Projekt - nur hier pflegen
-$script:WpeVersion       = '1.0.8'
+$script:WpeVersion       = '1.0.9'
 $script:WpeAuthor        = 'LeonMTN05'
 $script:WpeAuthorUrl     = 'https://github.com/LeonMTN05'
 $script:WpeProjectUrl    = 'https://github.com/LeonMTN05/WePrintEasy'
@@ -163,6 +163,9 @@ function Get-WpeDefaultSettings {
         DefaultPrintServer          = ''
         # Sprache von Verwaltung und Agent-Protokoll (en, de); leer = Vorgabe des Servers
         Language                    = ''
+        # Benutzer duerfen ihren Standarddrucker ueber das Symbol im Infobereich selbst waehlen
+        # (ersetzt ihre Zuweisung; gespeichert im Ordner "choices" neben der Konfiguration)
+        AllowUserPrinterChoice      = $false
     }
 }
 
@@ -471,7 +474,8 @@ function Get-WpeAssignment {
         [string]$Name = '*',
         [string]$ConfigPath = (Get-WpeConfigPath)
     )
-    $config = Read-WpeConfig -Path $ConfigPath
+    # Mit der Druckerwahl der Benutzer (ChangedByUser), so wie es die Verwaltung anzeigt
+    $config = Read-WpeEffectiveConfig -Path $ConfigPath
     $config.Assignments | Where-Object {
         (-not $Type -or $_.Type -eq $Type) -and ($_.Name -like $Name -or $_.DisplayName -like $Name)
     }
@@ -500,6 +504,8 @@ function Set-WpeAssignment {
     begin {
         $config = Read-WpeConfig -Path $ConfigPath
         $changed = $false
+        # Die Aenderung des Administrators ersetzt eine eigene Druckerwahl des Benutzers
+        $choiceSids = New-Object System.Collections.Generic.List[string]
     }
     process {
         $accountName = ConvertTo-WpeAccountName $Name
@@ -528,11 +534,15 @@ function Set-WpeAssignment {
             if ($existing) { [void]$config.Assignments.Remove($existing) }
             [void]$config.Assignments.Add($new)
             $changed = $true
+            if ($Type -eq 'User' -and $Sid) { $choiceSids.Add($Sid) }
             $new
         }
     }
     end {
-        if ($changed) { Save-WpeConfig -Config $config -Path $ConfigPath -Confirm:$false }
+        if ($changed) {
+            Save-WpeConfig -Config $config -Path $ConfigPath -Confirm:$false
+            foreach ($s in $choiceSids) { Remove-WpeUserChoice -Sid $s -ConfigPath $ConfigPath }
+        }
     }
 }
 
@@ -551,7 +561,17 @@ function Remove-WpeAssignment {
     }
     process {
         $hits = @($config.Assignments | Where-Object { Test-WpeSameAccount $_ $Type $Name $Sid })
-        if (-not $hits) { Write-Warning (Get-WpeText 'Assign.NotFound' $Type $Name); return }
+        # Eine eigene Druckerwahl des Benutzers gehoert zu seiner Zuweisung und wird mit entfernt
+        $choice = $false
+        if ($Type -eq 'User') {
+            foreach ($s in @(@($Sid) + @($hits | ForEach-Object { $_.Sid }) | Where-Object { $_ } | Sort-Object -Unique)) {
+                if (Remove-WpeUserChoice -Sid $s -ConfigPath $ConfigPath) { $choice = $true }
+            }
+        }
+        if (-not $hits) {
+            if (-not $choice) { Write-Warning (Get-WpeText 'Assign.NotFound' $Type $Name) }
+            return
+        }
         foreach ($h in $hits) {
             if ($PSCmdlet.ShouldProcess("$Type $($h.Name)", (Get-WpeText 'Assign.RemoveAction'))) {
                 [void]$config.Assignments.Remove($h)
@@ -596,6 +616,244 @@ function Resolve-WpeAssignment {
             Sort-Object -Property Priority, Name)
     if ($groups.Count -gt 0) { return $groups[0] }
     return $null
+}
+
+#endregion
+
+#region Druckerwahl durch Benutzer --------------------------------------------
+# Ist AllowUserPrinterChoice eingeschaltet, waehlen Benutzer ihren Standarddrucker ueber das Symbol im
+# Infobereich (WePrintEasy-Tray.ps1) selbst. Die config.json duerfen sie nicht schreiben - die Wahl liegt
+# deshalb je Benutzer in choices\<SID>.json neben der Konfiguration und ersetzt dort seine Zuweisung
+# (Agent, Verwaltung, "Benutzer pruefen"). Aendert oder entfernt der Administrator die Zuweisung des
+# Benutzers, wird die Datei geloescht: Es gilt immer die letzte Aenderung.
+
+$script:ChoiceUsersSid   = 'S-1-5-11'   # Authentifizierte Benutzer: duerfen im Ordner Dateien anlegen
+$script:ChoiceCreatorSid = 'S-1-3-0'    # ERSTELLER-BESITZER: jeder darf seine eigene Datei aendern
+$script:AdminsSid        = 'S-1-5-32-544'
+
+function Get-WpeChoiceDirectory {
+    <# Ordner "choices" neben der Konfiguration: je Benutzer eine Datei <SID>.json mit seiner Druckerwahl. #>
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    Join-Path (Split-Path -Parent $ConfigPath) 'choices'
+}
+
+function ConvertTo-WpeChoicePattern {
+    <#
+        Vorgabe fuer einen in der Sitzung gewaehlten Drucker. Umgeleitete RDP-Drucker tragen die
+        Sitzungsnummer im Namen ("HP (umgeleitet 3)", "HP (von PC01) in Sitzung 3") - die wechselt mit
+        jeder Anmeldung und wird zum Platzhalter. Alle anderen Namen bleiben unveraendert.
+    #>
+    param([Parameter(Mandatory)][string]$Name)
+    $m = [regex]::Match($Name, '^(?<head>.*(?:\((?:umgeleitet|redirected) | in (?:Sitzung|session) ))\d+(?<tail>\)?)$')
+    if (-not $m.Success) { return $Name }
+    $escape = { param($t) [System.Management.Automation.WildcardPattern]::Escape($t) }
+    return ((& $escape $m.Groups['head'].Value) + '*' + (& $escape $m.Groups['tail'].Value))
+}
+
+function Get-WpeFileOwnerSid {
+    param([Parameter(Mandatory)][string]$Path)
+    (Get-Acl -LiteralPath $Path).GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+}
+
+function Read-WpeUserChoice {
+    <#
+        Druckerwahl der Benutzer (Ordner "choices"); mit -UserSid nur die eines Benutzers.
+        Gueltig ist eine Datei nur, wenn sie dem Benutzer gehoert, dessen SID sie im Namen traegt (oder den
+        Administratoren) - so kann niemand fuer einen anderen Benutzer waehlen. Defekte Dateien werden uebersprungen.
+    #>
+    [CmdletBinding()]
+    param([string]$ConfigPath = (Get-WpeConfigPath), [string]$UserSid)
+    $dir = Get-WpeChoiceDirectory $ConfigPath
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+    $files = if ($UserSid) {
+        $f = Join-Path $dir "$UserSid.json"
+        if (Test-Path -LiteralPath $f -PathType Leaf) { Get-Item -LiteralPath $f }
+    } else {
+        Get-ChildItem -LiteralPath $dir -Filter 'S-*.json' -File
+    }
+    foreach ($f in @($files)) {
+        try {
+            $owner = Get-WpeFileOwnerSid $f.FullName
+            if ($owner -ne $f.BaseName -and $owner -ne $script:AdminsSid) {
+                Write-Verbose (Get-WpeText 'Choice.ForeignOwner' $f.Name $owner)
+                continue
+            }
+            $d = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $value = { param($n) if ($d -and $d.PSObject.Properties[$n] -and $null -ne $d.$n) { [string]$d.$n } else { '' } }
+            if (-not (& $value 'Printer')) { continue }
+            [pscustomobject][ordered]@{
+                Sid         = $f.BaseName
+                Name        = ConvertTo-WpeAccountName (& $value 'Name')
+                Account     = & $value 'Account'
+                DisplayName = & $value 'DisplayName'
+                Printer     = (& $value 'Printer').Trim()
+                PrinterName = & $value 'PrinterName'
+                ModifiedAt  = & $value 'ModifiedAt'
+                Computer    = & $value 'Computer'
+                Path        = $f.FullName
+            }
+        } catch {
+            Write-Verbose "$($f.FullName): $($_.Exception.Message)"
+        }
+    }
+}
+
+function Save-WpeUserChoice {
+    <#
+        Speichert die Druckerwahl des angemeldeten Benutzers (Fenster im Infobereich) in seiner eigenen
+        Datei choices\<SID>.json. Liefert die gespeicherte Vorgabe (ConvertTo-WpeChoicePattern).
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$PrinterName,
+        [string]$ConfigPath = (Get-WpeConfigPath),
+        [string]$DisplayName = ''
+    )
+    $ErrorActionPreference = 'Stop'
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $dir = Get-WpeChoiceDirectory $ConfigPath
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw (Get-WpeText 'Choice.NoFolder' $dir) }
+    $file = Join-Path $dir "$sid.json"
+    $pattern = ConvertTo-WpeChoicePattern $PrinterName
+    $entry = [pscustomobject][ordered]@{
+        Sid         = $sid
+        Name        = [string]$env:USERNAME
+        Account     = Get-WpeCurrentAccount
+        DisplayName = $DisplayName
+        Printer     = $pattern
+        PrinterName = $PrinterName
+        ModifiedAt  = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        Computer    = [string]$env:COMPUTERNAME
+    }
+    if (-not $PSCmdlet.ShouldProcess($file, (Get-WpeText 'Choice.SaveAction' $PrinterName))) { return }
+    # Direkt in die eigene Datei schreiben: Benutzer duerfen im Ordner nur anlegen und ihre eigene Datei aendern
+    [IO.File]::WriteAllText($file, (ConvertTo-Json -InputObject $entry), (New-Object System.Text.UTF8Encoding($false)))
+    return $pattern
+}
+
+function Remove-WpeUserChoice {
+    <# Loescht die Druckerwahl eines Benutzers (Administrator aendert/entfernt dessen Zuweisung). $true, wenn es eine gab. #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$Sid, [string]$ConfigPath = (Get-WpeConfigPath))
+    $file = Join-Path (Get-WpeChoiceDirectory $ConfigPath) "$Sid.json"
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $false }
+    if (-not $PSCmdlet.ShouldProcess($file, (Get-WpeText 'Uninstall.Remove'))) { return $false }
+    try {
+        Remove-Item -LiteralPath $file -Force -ErrorAction Stop
+    } catch {
+        # Sonst gaelte die Wahl des Benutzers stillschweigend weiter
+        throw (Get-WpeText 'Choice.RemoveFailed' $file $_.Exception.Message)
+    }
+    return $true
+}
+
+function Test-WpeChangedByUser {
+    <# $true fuer eine Zuweisung, die der Benutzer selbst gewaehlt hat (Merge-WpeUserChoice). #>
+    param($Assignment)
+    [bool]($Assignment -and $Assignment.PSObject.Properties['ChangedByUser'] -and $Assignment.ChangedByUser)
+}
+
+function Merge-WpeUserChoice {
+    <#
+        Konfiguration mit der Druckerwahl der Benutzer: Eine Wahl ersetzt die Benutzerzuweisung mit derselben
+        SID bzw. kommt als Benutzerzuweisung hinzu (ChangedByUser = $true, PreviousPrinter = bisherige Vorgabe
+        des Administrators). Liefert eine Kopie - zum Speichern immer Read-WpeConfig verwenden.
+    #>
+    param([Parameter(Mandatory)]$Config, [object[]]$Choices)
+    $bySid = @{}
+    foreach ($c in @($Choices)) { if ($c -and $c.Sid) { $bySid[$c.Sid.ToUpperInvariant()] = $c } }
+    $list = New-Object System.Collections.ArrayList
+    $replaced = @{}
+    foreach ($a in $Config.Assignments) {
+        if ($a.Type -eq 'User' -and $a.Sid -and $bySid.ContainsKey($a.Sid.ToUpperInvariant())) { $replaced[$a.Sid.ToUpperInvariant()] = $a; continue }
+        [void]$list.Add($a)
+    }
+    $merged = foreach ($key in $bySid.Keys) {
+        $c = $bySid[$key]
+        $old = $replaced[$key]
+        $name = if ($old) { $old.Name } elseif ($c.Name) { $c.Name } else { $c.Sid }
+        $display = if ($old -and $old.DisplayName) { $old.DisplayName } else { $c.DisplayName }
+        $a = New-WpeAssignmentObject -Type User -Name $name -Printer $c.Printer -Sid $c.Sid -DisplayName $display `
+            -Comment $(if ($old) { $old.Comment } else { '' }) -ModifiedAt $c.ModifiedAt -ModifiedBy $(if ($c.Account) { $c.Account } else { $c.Name })
+        $a | Add-Member -NotePropertyName ChangedByUser -NotePropertyValue $true
+        $a | Add-Member -NotePropertyName PreviousPrinter -NotePropertyValue $(if ($old) { $old.Printer } else { '' })
+        $a
+    }
+    # Zuerst: eine Benutzerzuweisung ohne SID (nur Anmeldename) darf die Wahl nicht ueberdecken
+    $all = New-Object System.Collections.ArrayList
+    foreach ($a in @($merged) + @($list)) { if ($a) { [void]$all.Add($a) } }
+    [pscustomobject][ordered]@{
+        Version     = $Config.Version
+        Settings    = $Config.Settings
+        Assignments = $all
+        Printers    = $Config.Printers
+        Problems    = $Config.Problems
+    }
+}
+
+function Read-WpeEffectiveConfig {
+    <#
+        Konfiguration so, wie sie wirkt: mit der Druckerwahl der Benutzer, wenn AllowUserPrinterChoice
+        eingeschaltet ist (sonst unveraendert). Nur zum Anzeigen und Aufloesen, nicht zum Speichern.
+    #>
+    [CmdletBinding()]
+    param([string]$Path = (Get-WpeConfigPath), [string]$UserSid)
+    $config = Read-WpeConfig -Path $Path
+    if (-not [bool]$config.Settings.AllowUserPrinterChoice) { return $config }
+    $p = @{ ConfigPath = $Path }
+    if ($UserSid) { $p.UserSid = $UserSid }
+    Merge-WpeUserChoice -Config $config -Choices @(Read-WpeUserChoice @p)
+}
+
+function Initialize-WpeChoiceDirectory {
+    <#
+        Legt den Ordner "choices" an und berechtigt ihn (Administrator): Authentifizierte Benutzer duerfen
+        darin nur Dateien anlegen, ERSTELLER-BESITZER aendert nur seine eigene Datei. Lesen erben alle vom
+        Konfigurationsordner. Bei zentraler Konfiguration muss die Freigabe Benutzern "Aendern" erlauben.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    $ErrorActionPreference = 'Stop'
+    $dir = Get-WpeChoiceDirectory $ConfigPath
+    if (-not $PSCmdlet.ShouldProcess($dir, (Get-WpeText 'Choice.InitAction'))) { return }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $item = Get-Item -LiteralPath $dir
+    # Nur die Zugriffsliste lesen und schreiben - Besitzer setzen duerfte auf einer Freigabe scheitern
+    $acl = $item.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+    $sid = { param($s) New-Object System.Security.Principal.SecurityIdentifier($s) }
+    $none = [System.Security.AccessControl.InheritanceFlags]::None
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((& $sid $script:ChoiceUsersSid),
+                ([System.Security.AccessControl.FileSystemRights]'ReadAndExecute, CreateFiles'), $none, [System.Security.AccessControl.PropagationFlags]::None, 'Allow')))
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((& $sid $script:ChoiceCreatorSid),
+                [System.Security.AccessControl.FileSystemRights]::Modify, [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
+                [System.Security.AccessControl.PropagationFlags]::InheritOnly, 'Allow')))
+    $item.SetAccessControl($acl)
+}
+
+function Test-WpeChoiceDirectory {
+    <#
+        Zustand des Ordners "choices" fuer die Systempruefung: Status Missing, NoPermission oder OK und
+        Foreign = Dateien, die nicht dem Benutzer ihres Namens gehoeren (werden nicht beachtet).
+    #>
+    [CmdletBinding()]
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    $dir = Get-WpeChoiceDirectory $ConfigPath
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return [pscustomobject]@{ Status = 'Missing'; Path = $dir; Foreign = @() } }
+    $rules = @((Get-Acl -LiteralPath $dir).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.AccessControlType -eq 'Allow' })
+    $has = {
+        param($Sids, $Right, [bool]$Files)
+        @($rules | Where-Object {
+                $Sids -contains $_.IdentityReference.Value -and ($_.FileSystemRights -band $Right) -eq $Right -and
+                (-not $Files -or ($_.InheritanceFlags -band [System.Security.AccessControl.InheritanceFlags]::ObjectInherit))
+            }).Count -gt 0
+    }
+    # Anlegen: Authentifizierte Benutzer, Benutzer oder Jeder; eigene Datei aendern: ERSTELLER-BESITZER
+    $canCreate = & $has @($script:ChoiceUsersSid, 'S-1-5-32-545', 'S-1-1-0') ([System.Security.AccessControl.FileSystemRights]::CreateFiles) $false
+    $canModify = & $has @($script:ChoiceCreatorSid) ([System.Security.AccessControl.FileSystemRights]::Modify) $true
+    $foreign = @(Get-ChildItem -LiteralPath $dir -Filter 'S-*.json' -File | Where-Object {
+            try { $o = Get-WpeFileOwnerSid $_.FullName; $o -ne $_.BaseName -and $o -ne $script:AdminsSid } catch { $false }
+        } | ForEach-Object { $_.Name })
+    [pscustomobject]@{ Status = $(if ($canCreate -and $canModify) { 'OK' } else { 'NoPermission' }); Path = $dir; Foreign = $foreign }
 }
 
 #endregion
@@ -1013,6 +1271,7 @@ function New-WpeAgentState {
         GroupSids   = $GroupSids
         Log         = $Log
         Stamp       = $null
+        ForceReload = $false
         Config      = $null
         Target      = $null
         Connected   = @{}
@@ -1038,11 +1297,15 @@ function Write-WpeAgentProblem {
 function Get-WpeAssignmentSource {
     <# "Benutzerzuweisung" bzw. "Gruppe 'X'" - woher eine Vorgabe stammt. #>
     param([Parameter(Mandatory)]$Assignment)
-    if ($Assignment.Type -eq 'User') { Get-WpeText 'Agent.ViaUser' } else { Get-WpeText 'Agent.ViaGroup' $Assignment.Name }
+    if (Test-WpeChangedByUser $Assignment) { Get-WpeText 'Agent.ViaChoice' }
+    elseif ($Assignment.Type -eq 'User') { Get-WpeText 'Agent.ViaUser' } else { Get-WpeText 'Agent.ViaGroup' $Assignment.Name }
 }
 
 function Update-WpeAgentConfig {
-    <# Laedt die Konfiguration neu, wenn sich die Datei geaendert hat, und ermittelt die Vorgabe. #>
+    <#
+        Laedt die Konfiguration neu, wenn sich die Datei oder die eigene Druckerwahl (choices\<SID>.json)
+        geaendert hat, und ermittelt die Vorgabe. $State.ForceReload: auf jeden Fall neu lesen.
+    #>
     param([Parameter(Mandatory)][hashtable]$State)
     try {
         $item = Get-Item -LiteralPath $State.ConfigPath -ErrorAction Stop
@@ -1051,7 +1314,12 @@ function Update-WpeAgentConfig {
         if (-not $State.Config) { Write-WpeAgentProblem $State (Get-WpeText 'Agent.ConfigUnreachable' $State.ConfigPath $_.Exception.Message) }
         return
     }
-    if ($stamp -eq $State.Stamp) { return }
+    if ($State.UserSid) {
+        $choice = Get-Item -LiteralPath (Join-Path (Get-WpeChoiceDirectory $State.ConfigPath) "$($State.UserSid).json") -ErrorAction SilentlyContinue
+        if ($choice) { $stamp += '|{0}|{1}' -f $choice.LastWriteTimeUtc.Ticks, $choice.Length }
+    }
+    if ($stamp -eq $State.Stamp -and -not $State.ForceReload) { return }
+    $State.ForceReload = $false
 
     try {
         $config = Read-WpeConfig -Path $State.ConfigPath
@@ -1071,6 +1339,10 @@ function Update-WpeAgentConfig {
             $sid = Get-WpeAccountSid -Name $a.Name
             if ($sid) { $a.Sid = $sid }
         }
+    }
+    # Eigene Druckerwahl ersetzt die Zuweisung (nur wenn in der Verwaltung erlaubt)
+    if ([bool]$config.Settings.AllowUserPrinterChoice -and $State.UserSid) {
+        $config = Merge-WpeUserChoice -Config $config -Choices @(Read-WpeUserChoice -ConfigPath $State.ConfigPath -UserSid $State.UserSid)
     }
 
     $target = Resolve-WpeAssignment -Config $config -UserSid $State.UserSid -UserName $State.UserName -GroupSids $State.GroupSids
@@ -1274,6 +1546,30 @@ function Restart-WpeAgent {
             }
         }
     }
+}
+
+function Test-WpeTrayRunning {
+    <# $true, wenn in dieser Sitzung das Symbol fuer die Druckerwahl (WePrintEasy-Tray.ps1) laeuft. #>
+    $m = $null
+    if ([System.Threading.Mutex]::TryOpenExisting('Local\WePrintEasy.Tray', [ref]$m)) { $m.Dispose(); return $true }
+    return $false
+}
+
+function Start-WpeTray {
+    <# Startet das Symbol fuer die Druckerwahl unsichtbar in der eigenen Sitzung (Agent). #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$ScriptPath, [Parameter(Mandatory)][string]$ConfigPath)
+    if (-not $PSCmdlet.ShouldProcess($ScriptPath, 'Start')) { return }
+    $launch = Get-WpeHiddenLaunch "-NoProfile -NonInteractive -ExecutionPolicy $(Get-WpeExecutionPolicy -Path $ScriptPath) -STA -WindowStyle Hidden -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
+    Start-Process -FilePath $launch.FilePath -ArgumentList $launch.Arguments -WindowStyle Hidden
+}
+
+function Get-WpeTrayProcess {
+    <# Laufende Symbole fuer die Druckerwahl auf diesem Rechner (Deinstallation). #>
+    [CmdletBinding()]
+    param()
+    Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe' AND CommandLine LIKE '%WePrintEasy-Tray.ps1%'" -ErrorAction Stop |
+        ForEach-Object { [pscustomobject]@{ ProcessId = [int]$_.ProcessId; SessionId = [int]$_.SessionId } }
 }
 
 #endregion
@@ -1490,8 +1786,8 @@ function Invoke-WpeRemoteForce {
         try { $account = ([System.Security.Principal.SecurityIdentifier]$user.Sid).Translate([System.Security.Principal.NTAccount]).Value } catch { Write-Verbose $_.Exception.Message }
         & $report 'OK' (Get-WpeText 'Force.User' $account $user.DisplayName)
 
-        # 2. Zuweisung laut dieser Konfiguration
-        $config = Read-WpeConfig -Path $ConfigPath
+        # 2. Zuweisung laut dieser Konfiguration (inkl. eigener Druckerwahl des Benutzers)
+        $config = Read-WpeEffectiveConfig -Path $ConfigPath -UserSid $user.Sid
         $groupSids = @()
         try { $groupSids = @(Get-WpeAdUserGroupSids -UserSid $user.Sid) } catch { & $report 'Warning' (Get-WpeText 'Force.GroupsFailed' $_.Exception.Message) }
         $target = Resolve-WpeAssignment -Config $config -UserSid $user.Sid -UserName $user.Name -GroupSids $groupSids
@@ -2154,6 +2450,27 @@ function Get-WpeSystemStatus {
         }
     }
 
+    # 4b. Druckerwahl durch Benutzer: Ordner "choices" mit Schreibrecht fuer die eigene Datei
+    if ($config -and [bool]$config.Settings.AllowUserPrinterChoice) {
+        try {
+            $cd = Test-WpeChoiceDirectory -ConfigPath $ConfigPath
+            $n = @(Read-WpeUserChoice -ConfigPath $ConfigPath).Count
+            if ($cd.Status -eq 'Missing') {
+                Add-Result 'UserChoice' 'Error' (Get-WpeText 'Check.UserChoice.Missing' $cd.Path) 'ChoiceFolder'
+            } elseif ($cd.Status -ne 'OK') {
+                Add-Result 'UserChoice' 'Error' (Get-WpeText 'Check.UserChoice.NoPermission' $cd.Path) 'ChoiceFolder'
+            } elseif ($cd.Foreign) {
+                Add-Result 'UserChoice' 'Warning' (Get-WpeText 'Check.UserChoice.Foreign' ($cd.Foreign -join ', ') $cd.Path)
+            } else {
+                $detail = Get-WpeText 'Check.UserChoice.Ok' $n
+                if ($ConfigPath.StartsWith('\\')) { $detail += ' ' + (Get-WpeText 'Check.UserChoice.ShareHint') }
+                Add-Result 'UserChoice' 'OK' $detail
+            }
+        } catch {
+            Add-Result 'UserChoice' 'Error' $_.Exception.Message 'ChoiceFolder'
+        }
+    }
+
     # 5. RDS-Richtlinien
     $tsKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
     $ts = Get-ItemProperty -LiteralPath $tsKey -ErrorAction SilentlyContinue
@@ -2240,7 +2557,9 @@ Export-ModuleMember -Function @(
     'Set-WpePrinterCatalog', 'Install-WpePrinterDriver', 'Get-WpeAgentLogPath',
     'Get-WpeExecutionPolicy', 'Get-WpeHiddenLaunch', 'Get-WpeSignatureStatus',
     'Measure-WpeEditDistance', 'Get-WpeAdComputer', 'Invoke-WpeRemoteForce',
-    'Get-WpeAgentProcess', 'Restart-WpeAgent',
+    'Get-WpeAgentProcess', 'Restart-WpeAgent', 'Test-WpeTrayRunning', 'Start-WpeTray', 'Get-WpeTrayProcess',
+    'Get-WpeChoiceDirectory', 'ConvertTo-WpeChoicePattern', 'Read-WpeUserChoice', 'Save-WpeUserChoice', 'Remove-WpeUserChoice',
+    'Test-WpeChangedByUser', 'Merge-WpeUserChoice', 'Read-WpeEffectiveConfig', 'Initialize-WpeChoiceDirectory', 'Test-WpeChoiceDirectory',
     'Get-WpeHostDirectory', 'Register-WpeHost', 'Unregister-WpeHost', 'Get-WpeHost', 'Get-WpeHostVersionStatus',
     'Get-WpeAboutInfo', 'Get-WpeSystemInfo', 'Get-WpeIssueUrl',
     'ConvertTo-WpeVersion', 'ConvertTo-WpeLatestRelease', 'Get-WpeLatestRelease', 'Test-WpeNewerVersion',
