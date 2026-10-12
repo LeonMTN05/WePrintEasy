@@ -818,8 +818,10 @@ function Initialize-WpeChoiceDirectory {
     if (-not $PSCmdlet.ShouldProcess($dir, (Get-WpeText 'Choice.InitAction'))) { return }
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $item = Get-Item -LiteralPath $dir
-    # Nur die Zugriffsliste lesen und schreiben - Besitzer setzen duerfte auf einer Freigabe scheitern
-    $acl = $item.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+    # Nur die Zugriffsliste lesen und schreiben - Besitzer setzen duerfte auf einer Freigabe scheitern.
+    # PowerShell 7 (.NET) kennt GetAccessControl/SetAccessControl nur als Erweiterungsmethoden.
+    $access = [System.Security.AccessControl.AccessControlSections]::Access
+    $acl = if ($item.PSObject.Methods['GetAccessControl']) { $item.GetAccessControl($access) } else { [System.IO.FileSystemAclExtensions]::GetAccessControl($item, $access) }
     $sid = { param($s) New-Object System.Security.Principal.SecurityIdentifier($s) }
     $none = [System.Security.AccessControl.InheritanceFlags]::None
     $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((& $sid $script:ChoiceUsersSid),
@@ -827,7 +829,7 @@ function Initialize-WpeChoiceDirectory {
     $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((& $sid $script:ChoiceCreatorSid),
                 [System.Security.AccessControl.FileSystemRights]::Modify, [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
                 [System.Security.AccessControl.PropagationFlags]::InheritOnly, 'Allow')))
-    $item.SetAccessControl($acl)
+    if ($item.PSObject.Methods['SetAccessControl']) { $item.SetAccessControl($acl) } else { [System.IO.FileSystemAclExtensions]::SetAccessControl($item, $acl) }
 }
 
 function Test-WpeChoiceDirectory {
