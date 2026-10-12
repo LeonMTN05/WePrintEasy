@@ -78,6 +78,7 @@ try {
     & $log (Get-WpeText 'Agent.Start' (Get-WpeCurrentAccount) $state.UserSid ([Diagnostics.Process]::GetCurrentProcess().SessionId) $env:COMPUTERNAME $ConfigPath) 'INFO'
 
     $start = Get-Date
+    $missingSince = $null
     while ($true) {
         $result = 'Failed'
         try {
@@ -95,8 +96,26 @@ try {
             break
         }
 
-        $settings = if ($state.Config) { $state.Config.Settings } else { [pscustomobject](Get-WpeDefaultSettings) }
-        $sleep = Get-WpeAgentSleepSeconds -Settings $settings -ElapsedSeconds ((Get-Date) - $start).TotalSeconds
+        # Deinstalliert (Programmdatei weg)? Dann nicht weiter zuruecksetzen. Erst nach 10 s, damit
+        # ein kurzes Fehlen beim Austausch der Dateien nicht zaehlt.
+        if (Test-Path -LiteralPath $PSCommandPath) {
+            $missingSince = $null
+        } elseif (-not $missingSince) {
+            $missingSince = Get-Date
+        } elseif (((Get-Date) - $missingSince).TotalSeconds -ge 10) {
+            & $log (Get-WpeText 'Agent.Uninstalled' $PSCommandPath) 'INFO'
+            break
+        }
+
+        $elapsed = ((Get-Date) - $start).TotalSeconds
+        try {
+            $settings = if ($state.Config) { $state.Config.Settings } else { [pscustomobject](Get-WpeDefaultSettings) }
+            $sleep = Get-WpeAgentSleepSeconds -Settings $settings -ElapsedSeconds $elapsed
+        } catch {
+            # Darf den Agenten nie beenden: dann mit den Standardwerten weiter
+            Write-WpeAgentProblem $state (Get-WpeText 'Agent.Error' $_.Exception.Message)
+            $sleep = Get-WpeAgentSleepSeconds -Settings ([pscustomobject](Get-WpeDefaultSettings)) -ElapsedSeconds $elapsed
+        }
         if ($sleep -lt 0) { break }
 
         if ($wake.WaitOne([TimeSpan]::FromSeconds($sleep))) {

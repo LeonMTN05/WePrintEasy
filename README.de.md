@@ -8,7 +8,7 @@
 Gesetzt bei jeder Anmeldung – und auf Wunsch festgehalten während der ganzen Sitzung.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.5-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.6-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-systemvoraussetzungen)
@@ -116,7 +116,7 @@ Alternative zum ZIP: eine einzelne `.exe` mit Eintrag unter **Apps / Programme u
 
 ```powershell
 # Unbeaufsichtigt (Rückgabewert 0 = erfolgreich, 10 = fehlgeschlagen, Protokoll: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.5.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.6.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -148,7 +148,7 @@ alle bisherigen Einstellungen: Konfigurationspfad, Zuweisungen, Druckerliste, Sp
 Editor-Gruppe, RDS-Richtlinie und Verknüpfung. Am Ende zeigt er die Systemprüfung an.
 
 > [!NOTE]
-> Agenten, die in Benutzersitzungen bereits laufen, nutzen die neue Version ab der nächsten Anmeldung.
+> Agenten, die in Benutzersitzungen bereits laufen, startet das Update mit der neuen Version neu – auch in getrennten Sitzungen.
 > Installationen aus der Zeit vor der Sprachauswahl bleiben deutsch.
 > Für automatisierte Updates: `.\Update-WePrintEasy.ps1 -NoPause`
 
@@ -191,6 +191,10 @@ Damit alle Server dieselben Zuweisungen verwenden, die Konfiguration zentral abl
    ```powershell
    .\Install-WePrintEasy.ps1 -ConfigPath '\\fs01\WePrintEasy$\config.json' -PrintServer fs01 -DisableClientDefaultPrinter
    ```
+
+Bei Installation und Update trägt sich jeder Server mit seiner Version im Ordner `hosts` neben der
+Konfiguration ein. Der Reiter **Einrichtung** zeigt dann auf jedem Server, wo in der Farm noch eine
+ältere Version läuft (Server mit einer Version vor 1.0.6 erscheinen erst nach ihrem Update).
 
 Bei lokaler Konfiguration kann mit `-EditorGroup 'FIRMA\Druckeradmins'` eine Gruppe
 berechtigt werden, die Zuweisungen ohne Administratorrechte zu pflegen.
@@ -320,8 +324,8 @@ erneut – z. B. wenn neue Drucker hinzugekommen sind – und kann fehlende Trei
 <summary><b>Reiter „Einrichtung“</b></summary>
 <br>
 
-Systemprüfung mit Ampel: Installation, Anmelde-Aufgabe, Konfiguration, Schreibrechte,
-Zuweisungen, RDS-Richtlinien sowie für jeden verwendeten Druckserver: erreichbar,
+Systemprüfung mit Ampel: Installation und Version, Anmelde-Aufgabe, Konfiguration, Schreibrechte,
+Versionen der anderen Server mit derselben Konfiguration, Zuweisungen, RDS-Richtlinien sowie für jeden verwendeten Druckserver: erreichbar,
 Freigaben vorhanden, Treiber lokal installiert. **Ausgewählten Punkt beheben** setzt z. B.
 die RDS-Richtlinie. **Agent jetzt für mich ausführen** testet den Agenten in der eigenen Sitzung.
 
@@ -388,7 +392,7 @@ Reiter „Zuweisungen“ → Zuweisung auswählen → **Erzwingen…** (oder Rei
 das Ergebnis live an:
 
 1. Benutzer im AD und gültige Zuweisung (direkt oder über eine Gruppe)
-2. Terminalserver: DNS (bei Tippfehlern mit Vorschlag), Verbindung, WePrintEasy installiert, Anmelde-Aufgabe aktiv
+2. Terminalserver: DNS (bei Tippfehlern mit Vorschlag), Verbindung, WePrintEasy installiert (welche Version), Anmelde-Aufgabe aktiv
 3. Liest der Terminalserver **dieselbe Konfiguration** wie die Verwaltung?
 4. Ist der Benutzer angemeldet? Aktueller Standarddrucker, Druckerverbindung, läuft der Agent in der Sitzung?
 5. Startet den Agenten **sofort einmalig in der Sitzung des Benutzers** (vorübergehende geplante Aufgabe,
@@ -423,7 +427,7 @@ Per PowerShell: `Invoke-WpeRemoteForce -ComputerName TS01 -UserName mmuster`
 .\Uninstall-WePrintEasy.ps1 -RemoveConfig -RemoveClientDefaultPrinterPolicy
 ```
 
-Ein mit `-SelfSignedCertificate` erstelltes Zertifikat wird dabei immer mit entfernt.
+Noch laufende Agenten in Benutzersitzungen werden beendet. Ein mit `-SelfSignedCertificate` erstelltes Zertifikat wird dabei immer mit entfernt.
 Mit dem Windows-Installer eingerichtet: über *Apps / Programme und Features* deinstallieren.
 
 ## 📁 Projektstruktur

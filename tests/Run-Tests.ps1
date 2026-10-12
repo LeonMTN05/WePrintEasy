@@ -38,7 +38,23 @@ try {
 
     Set-Content -LiteralPath $cfgPath -Value '{ kaputt' -Encoding UTF8
     Assert 'Ungueltiges JSON wirft Fehler' { try { Read-WpeConfig -Path $cfgPath | Out-Null; $false } catch { $_.Exception.Message -like '*not valid JSON*' } }
-    Remove-Item -LiteralPath $cfgPath
+
+    # Von Hand bearbeitete Datei mit falschen Typen: lesbar bleiben, Standard verwenden, Problem melden
+    Set-Content -LiteralPath $cfgPath -Value '{ "Settings": { "LogonPhaseSeconds": "abc", "EnforceIntervalSeconds": "45", "EnforceDurationMinutes": -5, "EnforceDuringSession": "false", "ConnectNetworkPrinters": 0, "SetLegacyDefaultPrinterMode": "vielleicht" }, "Assignments": [ { "Type": "Group", "Name": "G1", "Printer": "P", "Priority": "hoch" }, { "Type": "Group", "Name": "G2", "Printer": "P", "Priority": "20" } ] }' -Encoding UTF8
+    $c = Read-WpeConfig -Path $cfgPath
+    Assert 'Ungueltige Zahl ergibt Standardwert' { $c.Settings.LogonPhaseSeconds -eq 120 -and $c.Settings.LogonPhaseSeconds -is [int] }
+    Assert 'Zahl als Text wird uebernommen' { $c.Settings.EnforceIntervalSeconds -eq 45 -and $c.Settings.EnforceIntervalSeconds -is [int] }
+    Assert 'Negative Zahl ergibt Standardwert' { $c.Settings.EnforceDurationMinutes -eq 0 }
+    Assert '"false" als Text ist $false (nicht $true)' { $c.Settings.EnforceDuringSession -eq $false }
+    Assert '0 als Ja/Nein ist $false' { $c.Settings.ConnectNetworkPrinters -eq $false }
+    Assert 'Ungueltiges Ja/Nein ergibt Standardwert' { $c.Settings.SetLegacyDefaultPrinterMode -eq $true }
+    Assert 'Ungueltige Prioritaet: Zuweisung bleibt mit 100' { $c.Assignments.Count -eq 2 -and ($c.Assignments | Where-Object Name -eq 'G1').Priority -eq 100 -and ($c.Assignments | Where-Object Name -eq 'G2').Priority -eq 20 }
+    Assert 'Ersetzte Werte werden gemeldet' { $c.Problems.Count -eq 4 -and ($c.Problems -join ' ') -like "*LogonPhaseSeconds*'abc'*" -and ($c.Problems -join ' ') -like "*'G1'*" }
+    Assert 'Gueltige Datei meldet nichts' { (Read-WpeConfig -Path (Join-Path $tmp 'fehlt.json')).Problems.Count -eq 0 }
+    Assert 'Agent-Wartezeit mit ersetzten Werten' { (Get-WpeAgentSleepSeconds -Settings $c.Settings -ElapsedSeconds 500) -eq -1 }
+    Save-WpeConfig -Config $c -Path $cfgPath -Confirm:$false
+    Assert 'Problems wird nicht gespeichert' { -not ((Get-Content -LiteralPath $cfgPath -Raw) -match 'Problems') -and (Read-WpeConfig -Path $cfgPath).Problems.Count -eq 0 }
+    Remove-Item -LiteralPath $cfgPath, "$cfgPath.bak" -ErrorAction SilentlyContinue
 
     Write-Host 'Zuweisungen'
     Set-WpeAssignment -Type User -Name 'mmuster' -Sid 'S-1-5-21-1-1-1-1001' -DisplayName 'Max Muster' -Printer '\\srv\HP-Buero' -ConfigPath $cfgPath | Out-Null
@@ -286,13 +302,40 @@ Group;Lager;\\srv\Lager;20
         else { Remove-ItemProperty -LiteralPath $userKey -Name LastUpdateCheck -ErrorAction SilentlyContinue }
     }
 
+    Write-Host 'Versionsuebersicht der Server (Farm)'
+    $farmCfg = Join-Path $tmp 'farm\config.json'
+    Assert 'Ohne Eintraege: keine Server' { @(Get-WpeHost -ConfigPath $farmCfg).Count -eq 0 }
+    Register-WpeHost -ConfigPath $farmCfg -InstallPath 'C:\Program Files\WePrintEasy' -Version '1.0.10' -Confirm:$false
+    $hostDir = Get-WpeHostDirectory $farmCfg
+    $own = Join-Path $hostDir "$env:COMPUTERNAME.json"
+    Assert 'Register-WpeHost legt hosts\<Rechner>.json neben der Konfiguration an' { (Test-Path -LiteralPath $own) -and $hostDir -eq (Join-Path $tmp 'farm\hosts') }
+    Assert 'Eintrag ist UTF-8 ohne BOM' { $b = [IO.File]::ReadAllBytes($own); -not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB) }
+    [IO.File]::WriteAllText((Join-Path $hostDir 'TS02.json'), '{ "ComputerName": "TS02", "Version": "1.0.9", "Updated": "2026-10-01T08:00:00Z" }')
+    [IO.File]::WriteAllText((Join-Path $hostDir 'kaputt.json'), '{ kaputt')
+    $farm = @(Get-WpeHost -ConfigPath $farmCfg)
+    Assert 'Get-WpeHost liest alle gueltigen Eintraege (defekte werden uebersprungen)' { $farm.Count -eq 2 -and ($farm | Where-Object ComputerName -eq 'TS02').Updated.Day -eq 1 }
+    $hs = Get-WpeHostVersionStatus -Hosts $farm
+    Assert 'Neueste Version numerisch (1.0.10 > 1.0.9), TS02 veraltet' { $hs.Newest -eq [version]'1.0.10' -and @($hs.Outdated).Count -eq 1 -and $hs.Outdated[0].ComputerName -eq 'TS02' }
+    Assert 'Eintrag ohne Version gilt als veraltet' { @((Get-WpeHostVersionStatus -Hosts @($farm + [pscustomobject]@{ ComputerName = 'TS03'; Version = '' })).Outdated).Count -eq 2 }
+    Assert 'Systempruefung warnt vor veraltetem Server' { $r = @(Get-WpeSystemStatus -ConfigPath $farmCfg) | Where-Object Id -eq 'Hosts'; $r.Status -eq 'Warning' -and $r.Detail -like '*TS02 (1.0.9)*1.0.10*' }
+    Remove-Item -LiteralPath (Join-Path $hostDir 'TS02.json')
+    Assert 'Systempruefung: alle Server aktuell' { (@(Get-WpeSystemStatus -ConfigPath $farmCfg) | Where-Object Id -eq 'Hosts').Status -eq 'OK' }
+    Unregister-WpeHost -ConfigPath $farmCfg -Confirm:$false
+    Assert 'Unregister-WpeHost entfernt nur den eigenen Eintrag' { -not (Test-Path -LiteralPath $own) -and (Test-Path -LiteralPath (Join-Path $hostDir 'kaputt.json')) }
+    Assert 'Get-WpeAgentProcess laeuft ohne Fehler' { $null -eq (@(Get-WpeAgentProcess) | Where-Object { -not $_.ProcessId }) }
+
     Write-Host 'App-Symbol'
     $icoBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..\src\WePrintEasy.ico'))
     Assert 'WePrintEasy.ico: Symboldatei mit 8 Groessen (16 bis 256)' { [BitConverter]::ToUInt16($icoBytes, 2) -eq 1 -and [BitConverter]::ToUInt16($icoBytes, 4) -eq 8 -and $icoBytes[6] -eq 16 -and $icoBytes[6 + 7 * 16] -eq 0 }
 
-    Write-Host 'Standarddrucker (Windows-API)'
-    # In RDP-Sitzungen weicht HKCU\...\Windows\Device vom wirksamen Standarddrucker ab - die API nicht
-    Assert 'Get-WpeDefaultPrinter entspricht Win32_Printer (Default)' { (Get-WpeDefaultPrinter) -eq (Get-CimInstance -ClassName Win32_Printer -Filter 'Default=TRUE' | Select-Object -First 1 -ExpandProperty Name) }
+    Write-Host 'Drucker der Sitzung (Windows-API)'
+    $names = @(Get-WpeInstalledPrinterNames)
+    $expected = @(Get-Printer -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    Assert 'Get-WpeInstalledPrinterNames (EnumPrinters) liefert dieselben Drucker wie Get-Printer' { $names.Count -eq $expected.Count -and -not (Compare-Object $names $expected) }
+    # Nicht mit Win32_Printer (Default) vergleichen: In RDP-Sitzungen mit umgeleiteten Druckern zeigt WMI
+    # den globalen Wert (HKCU\...\Windows\Device), nicht den wirksamen Standarddrucker der Sitzung
+    $default = Get-WpeDefaultPrinter
+    Assert 'Get-WpeDefaultPrinter liefert einen Drucker dieser Sitzung' { ($null -eq $default -and $names.Count -eq 0) -or $names -contains $default }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

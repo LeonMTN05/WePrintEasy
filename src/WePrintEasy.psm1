@@ -18,7 +18,7 @@ $script:PrinterRegKey    = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\W
 $script:ComputerDomain   = ''   # Zwischenspeicher fuer Get-WpeLdapPrefix
 
 # Version und Projekt - nur hier pflegen
-$script:WpeVersion       = '1.0.5'
+$script:WpeVersion       = '1.0.6'
 $script:WpeAuthor        = 'LeonMTN05'
 $script:WpeAuthorUrl     = 'https://github.com/LeonMTN05'
 $script:WpeProjectUrl    = 'https://github.com/LeonMTN05/WePrintEasy'
@@ -217,10 +217,39 @@ function ConvertTo-WpeAccountName {
     return $n
 }
 
+function ConvertTo-WpeSettingValue {
+    <#
+        Bringt einen Wert aus der JSON-Datei in den Typ des Standardwerts (Zahl >= 0, Ja/Nein, Text).
+        Ungueltig: $false und der Wert bleibt aus - z. B. "abc" als Zahl oder "false" als Text,
+        das [bool] sonst als $true lesen wuerde.
+    #>
+    param($Value, $Default, [ref]$Result)
+    if ($Default -is [bool]) {
+        if ($Value -is [bool]) { $Result.Value = $Value; return $true }
+        switch -Regex (([string]$Value).Trim()) {
+            '^(true|1)$' { $Result.Value = $true; return $true }
+            '^(false|0)$' { $Result.Value = $false; return $true }
+        }
+        return $false
+    }
+    if ($Default -is [int]) {
+        $n = 0
+        if ($Value -isnot [bool] -and [int]::TryParse(([string]$Value).Trim(), [ref]$n) -and $n -ge 0) { $Result.Value = $n; return $true }
+        return $false
+    }
+    $Result.Value = [string]$Value
+    return $true
+}
+
 function ConvertTo-WpeConfig {
-    <# Wandelt ein (aus JSON gelesenes) Objekt in eine vollstaendige Konfiguration um. #>
+    <#
+        Wandelt ein (aus JSON gelesenes) Objekt in eine vollstaendige Konfiguration um.
+        Ungueltige Werte ersetzt sie durch den Standard; die Meldungen dazu stehen in Problems
+        (werden nicht gespeichert - Agent-Protokoll und Systempruefung zeigen sie an).
+    #>
     param($Raw)
 
+    $problems = New-Object System.Collections.Generic.List[string]
     $defaults = Get-WpeDefaultSettings
     $settings = [ordered]@{}
     $rawSettings = $null
@@ -228,7 +257,12 @@ function ConvertTo-WpeConfig {
     foreach ($key in $defaults.Keys) {
         $value = $defaults[$key]
         if ($rawSettings -and $rawSettings.PSObject.Properties[$key] -and $null -ne $rawSettings.$key) {
-            $value = $rawSettings.$key
+            $converted = $null
+            if (ConvertTo-WpeSettingValue $rawSettings.$key $defaults[$key] ([ref]$converted)) {
+                $value = $converted
+            } else {
+                $problems.Add((Get-WpeText 'Config.InvalidSetting' $key $rawSettings.$key $defaults[$key]))
+            }
         }
         $settings[$key] = $value
     }
@@ -242,7 +276,15 @@ function ConvertTo-WpeConfig {
             foreach ($opt in 'Sid', 'DisplayName', 'Comment', 'ModifiedAt', 'ModifiedBy') {
                 if ($a.PSObject.Properties[$opt] -and $null -ne $a.$opt) { $p[$opt] = [string]$a.$opt }
             }
-            if ($a.PSObject.Properties['Priority'] -and $null -ne $a.Priority) { $p.Priority = [int]$a.Priority }
+            if ($a.PSObject.Properties['Priority'] -and $null -ne $a.Priority) {
+                $prio = 0
+                if ($a.Priority -isnot [bool] -and [int]::TryParse(([string]$a.Priority).Trim(), [ref]$prio)) {
+                    $p.Priority = $prio
+                } else {
+                    # Eine falsche Prioritaet darf nicht die ganze Konfiguration unlesbar machen
+                    $problems.Add((Get-WpeText 'Config.InvalidPriority' $a.Name $a.Priority))
+                }
+            }
             [void]$assignments.Add((New-WpeAssignmentObject @p))
         }
     }
@@ -265,6 +307,8 @@ function ConvertTo-WpeConfig {
         Assignments = $assignments
         # Druckerliste (Katalog) fuer die Auswahl im Verwaltungsprogramm
         Printers    = $printers
+        # Ersetzte ungueltige Werte (Save-WpeConfig schreibt das nicht mit)
+        Problems    = [string[]]$problems.ToArray()
     }
 }
 
@@ -703,8 +747,41 @@ function Get-WpeDefaultPrinter {
 }
 
 function Get-WpeInstalledPrinterNames {
-    <# Alle Drucker, die in der aktuellen Sitzung sichtbar sind (inkl. umgeleiteter). #>
-    @(Get-CimInstance -ClassName Win32_Printer -Property Name -ErrorAction Stop | ForEach-Object { $_.Name })
+    <#
+        Alle Drucker, die in der aktuellen Sitzung sichtbar sind (inkl. umgeleiteter und verbundener).
+        Ueber EnumPrinters (winspool, Stufe 4 = nur Namen) statt Win32_Printer: WMI fragt fuer jeden
+        Drucker Treiber und Status ab und brauchte auf einem Testserver mit 75 Druckern 90 s statt 0,4 s.
+    #>
+    if (-not ('WePrintEasy.PrinterEnum' -as [type])) {
+        Add-Type -Namespace WePrintEasy -Name PrinterEnum -MemberDefinition @'
+[DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+private static extern bool EnumPrinters(int flags, string name, int level, IntPtr buffer, int size, out int needed, out int returned);
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+private struct PRINTER_INFO_4 { public string pPrinterName; public string pServerName; public int Attributes; }
+public static string[] GetNames() {
+    const int flags = 2 | 4; // PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
+    int needed, returned;
+    EnumPrinters(flags, null, 4, IntPtr.Zero, 0, out needed, out returned);
+    if (needed <= 0) return new string[0];
+    IntPtr buffer = Marshal.AllocHGlobal(needed);
+    try {
+        if (!EnumPrinters(flags, null, 4, buffer, needed, out needed, out returned)) {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
+        string[] names = new string[returned];
+        int size = Marshal.SizeOf(typeof(PRINTER_INFO_4));
+        for (int i = 0; i < returned; i++) {
+            PRINTER_INFO_4 info = (PRINTER_INFO_4)Marshal.PtrToStructure(new IntPtr(buffer.ToInt64() + (long)i * size), typeof(PRINTER_INFO_4));
+            names[i] = info.pPrinterName;
+        }
+        return names;
+    } finally {
+        Marshal.FreeHGlobal(buffer);
+    }
+}
+'@
+    }
+    @([WePrintEasy.PrinterEnum]::GetNames())
 }
 
 function Set-WpeDefaultPrinter {
@@ -941,6 +1018,8 @@ function Update-WpeAgentConfig {
     # Sprache des Protokolls folgt der Einstellung - auch bei Aenderung waehrend der Sitzung
     $lang = Resolve-WpeLanguage ([string]$config.Settings.Language)
     if ($lang -ne $script:WpeLanguage) { Set-WpeLanguage $lang }
+    # Nur beim Neuladen (geaenderte Datei) - also nicht in jeder Runde
+    foreach ($p in $config.Problems) { Write-WpeAgentLog $State $p 'WARN' }
 
     # Von Hand eingetragene Zuweisungen ohne SID nachtraeglich aufloesen
     foreach ($a in $config.Assignments) {
@@ -1052,6 +1131,187 @@ function Get-WpeAgentLogPath {
     $root = [Environment]::ExpandEnvironmentVariables($prof.ProfileImagePath)
     return (Join-Path $root 'AppData\Local\WePrintEasy\agent.log')
 }
+
+#region Laufende Agenten (Update, Deinstallation) ----------------------------
+
+function Get-WpeAgentProcess {
+    <#
+        Agenten, die auf diesem Rechner in Benutzersitzungen laufen (dauerhafte Ueberwachung,
+        nicht -Once), mit Besitzer und Startzeit. Fuer fremde Sitzungen Administratorrechte noetig.
+    #>
+    [CmdletBinding()]
+    param()
+    $procs = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe' AND CommandLine LIKE '%WePrintEasy-Agent.ps1%'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -notmatch '\s-Once\b' })
+    foreach ($p in $procs) {
+        $user = ''; $sid = ''
+        try {
+            $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner
+            if ($o.ReturnValue -eq 0) { $user = if ($o.Domain) { "$($o.Domain)\$($o.User)" } else { [string]$o.User } }
+            $s = Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid
+            if ($s.ReturnValue -eq 0) { $sid = [string]$s.Sid }
+        } catch { Write-Verbose $_.Exception.Message }
+        [pscustomobject]@{ ProcessId = [int]$p.ProcessId; SessionId = [int]$p.SessionId; User = $user; UserSid = $sid; Started = $p.CreationDate }
+    }
+}
+
+function Restart-WpeAgent {
+    <#
+        Startet die laufenden Agenten dieses Rechners mit der installierten Version neu (nach einem
+        Update) - sonst liefe die alte Version weiter, bis sich der Benutzer abmeldet: Bei einer
+        Wiederverbindung weckt der neue Agent nur den laufenden alten.
+        Je Benutzer: alten Agenten beenden und den neuen wie bei der Anmeldung ueber eine kurzlebige
+        Aufgabe in dessen Sitzung starten. Die Aufgabe wird danach entfernt, der Agent laeuft weiter.
+        Benutzer mit mehreren Sitzungen bleiben unberuehrt (die Aufgabe startet nur in einer davon).
+        Administratorrechte noetig. Rueckgabe je Benutzer: User, SessionId, Status
+        (Restarted, Failed, Skipped) und Message.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$InstallPath,
+        # Nur Agenten, die vor diesem Zeitpunkt gestartet wurden (Beginn des Updates)
+        [datetime]$StartedBefore = (Get-Date),
+        [int]$TimeoutSeconds = 30
+    )
+    $agentFilter = "Name='powershell.exe' AND CommandLine LIKE '%WePrintEasy-Agent.ps1%'"
+    $agentPath = Join-Path $InstallPath 'WePrintEasy-Agent.ps1'
+    $launch = Get-WpeHiddenLaunch "-NoProfile -NonInteractive -ExecutionPolicy $(Get-WpeExecutionPolicy -Path $agentPath) -WindowStyle Hidden -File `"$agentPath`""
+    $taskPath = '\WePrintEasy\'
+    # Reste abgebrochener Laeufe
+    foreach ($old in @(Get-ScheduledTask -TaskPath $taskPath -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like 'Restart *' -and [string]$_.State -ne 'Running' })) {
+        try { Unregister-ScheduledTask -TaskPath $taskPath -TaskName $old.TaskName -Confirm:$false } catch { Write-Verbose $_.Exception.Message }
+    }
+
+    foreach ($g in @(Get-WpeAgentProcess | Where-Object { $_.Started -lt $StartedBefore } | Group-Object -Property UserSid)) {
+        $a = $g.Group[0]
+        $result = { param($Status, $Message) [pscustomobject]@{ User = $a.User; SessionId = $a.SessionId; Status = $Status; Message = $Message } }
+        if (-not $a.User -or -not $a.UserSid) { & $result 'Skipped' (Get-WpeText 'Agent.RestartNoOwner' $a.ProcessId); continue }
+        if ($g.Count -gt 1) { & $result 'Skipped' (Get-WpeText 'Agent.RestartMultiSession' (($g.Group | ForEach-Object { $_.SessionId }) -join ', ')); continue }
+        if (-not $PSCmdlet.ShouldProcess((Get-WpeText 'Agent.ProcessLabel' $a.User $a.SessionId), (Get-WpeText 'Agent.RestartAction'))) { continue }
+
+        $taskName = 'Restart {0} {1:yyyyMMdd-HHmmss}' -f ($a.User -replace '^.*\\', ''), (Get-Date)
+        $registered = $false
+        try {
+            $task = New-ScheduledTask -Action (New-ScheduledTaskAction -Execute $launch.FilePath -Argument $launch.Arguments) `
+                -Principal (New-ScheduledTaskPrincipal -UserId $a.User -LogonType Interactive -RunLevel Limited) `
+                -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries) `
+                -Description (Get-WpeText 'Agent.RestartTaskDescription')
+            # Erst registrieren, dann beenden: Scheitert die Aufgabe (z. B. Konto unbekannt), laeuft der alte Agent weiter
+            [void](Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -InputObject $task -Force)
+            $registered = $true
+            Stop-Process -Id $a.ProcessId -Force -ErrorAction Stop
+            # Mutex der Sitzung muss frei sein, sonst weckt der neue Agent nur den alten und beendet sich
+            [void](Wait-Process -Id $a.ProcessId -Timeout 10 -ErrorAction SilentlyContinue)
+            # Nur neue Prozesse pruefen, und nur per SID: Der Kontoname (GetOwner) fragt den
+            # Domaenencontroller und kann bei langsamer Anbindung Sekunden je Prozess dauern
+            $known = @{}
+            foreach ($p in @(Get-CimInstance -ClassName Win32_Process -Filter $agentFilter)) { $known[[int]$p.ProcessId] = $true }
+            Start-ScheduledTask -TaskPath $taskPath -TaskName $taskName
+            $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+            $started = $false
+            do {
+                Start-Sleep -Milliseconds 500
+                foreach ($p in @(Get-CimInstance -ClassName Win32_Process -Filter $agentFilter)) {
+                    if ($known.ContainsKey([int]$p.ProcessId) -or $p.CommandLine -match '\s-Once\b') { continue }
+                    try {
+                        $s = Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid
+                        if ($s.ReturnValue -ne 0) { continue }
+                        $known[[int]$p.ProcessId] = $true
+                        if ($s.Sid -eq $a.UserSid) { $started = $true }
+                    } catch { Write-Verbose $_.Exception.Message }
+                }
+            } while (-not $started -and (Get-Date) -lt $deadline)
+            if ($started) { & $result 'Restarted' '' } else { & $result 'Failed' (Get-WpeText 'Agent.RestartNotStarted' $TimeoutSeconds) }
+        } catch {
+            & $result 'Failed' $_.Exception.Message
+        } finally {
+            if ($registered) {
+                try { Unregister-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Confirm:$false } catch { Write-Verbose $_.Exception.Message }
+            }
+        }
+    }
+}
+
+#endregion
+
+#region Sitzungshosts (Versionsuebersicht der Farm) ---------------------------
+
+function Get-WpeHostDirectory {
+    <# Ordner "hosts" neben der Konfiguration: eine Datei je Server, der diese Konfiguration nutzt. #>
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    Join-Path (Split-Path -Parent $ConfigPath) 'hosts'
+}
+
+function Register-WpeHost {
+    <#
+        Traegt diesen Server mit seiner WePrintEasy-Version im Ordner "hosts" neben der Konfiguration
+        ein (Installer/Update). So sieht die Systempruefung jedes Servers, wo in der Farm noch eine
+        alte Version laeuft - ohne Netzwerkzugriff auf die anderen Server.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$ConfigPath = (Get-WpeConfigPath),
+        [string]$InstallPath = '',
+        [string]$Version = $script:WpeVersion
+    )
+    $dir = Get-WpeHostDirectory $ConfigPath
+    $file = Join-Path $dir "$($env:COMPUTERNAME).json"
+    if (-not $PSCmdlet.ShouldProcess($file, (Get-WpeText 'Config.SaveAction'))) { return }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null }
+    $entry = [pscustomobject][ordered]@{
+        ComputerName = $env:COMPUTERNAME
+        Version      = $Version
+        InstallPath  = $InstallPath
+        Updated      = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    [IO.File]::WriteAllText($file, (ConvertTo-Json -InputObject $entry), (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Unregister-WpeHost {
+    <# Entfernt den Eintrag dieses Servers (Deinstallation). #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    $file = Join-Path (Get-WpeHostDirectory $ConfigPath) "$($env:COMPUTERNAME).json"
+    if ((Test-Path -LiteralPath $file) -and $PSCmdlet.ShouldProcess($file, (Get-WpeText 'Uninstall.Remove'))) {
+        Remove-Item -LiteralPath $file -Force -ErrorAction Stop
+    }
+}
+
+function Get-WpeHost {
+    <# Server, die diese Konfiguration nutzen (Ordner "hosts"), mit Version und Zeitpunkt der Installation. #>
+    [CmdletBinding()]
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    $dir = Get-WpeHostDirectory $ConfigPath
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+    foreach ($f in Get-ChildItem -LiteralPath $dir -Filter '*.json' -File) {
+        try {
+            $d = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $updated = $null
+            try { $updated = [DateTime]::Parse([string]$d.Updated, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal) } catch { Write-Verbose $_.Exception.Message }
+            [pscustomobject]@{
+                ComputerName = if ($d.ComputerName) { [string]$d.ComputerName } else { $f.BaseName }
+                Version      = [string]$d.Version
+                Updated      = $updated
+            }
+        } catch {
+            Write-Verbose "$($f.FullName): $($_.Exception.Message)"
+        }
+    }
+}
+
+function Get-WpeHostVersionStatus {
+    <# Neueste Version unter den Servern und die Server mit aelterer (oder unbekannter) Version. #>
+    param([object[]]$Hosts)
+    $newest = $null
+    foreach ($h in $Hosts) {
+        $v = ConvertTo-WpeVersion $h.Version
+        if ($v -and (-not $newest -or $v -gt $newest)) { $newest = $v }
+    }
+    $outdated = @($Hosts | Where-Object { $v = ConvertTo-WpeVersion $_.Version; -not $v -or ($newest -and $v -lt $newest) } | Sort-Object -Property ComputerName)
+    [pscustomobject]@{ Newest = $newest; Outdated = $outdated }
+}
+
+#endregion
 
 #region Erzwingen auf einem Terminalserver ------------------------------------
 
@@ -1246,6 +1506,7 @@ function Invoke-WpeRemoteForce {
         $tsInstall = Get-WpeRemoteRegString $cim $HKLM 'SOFTWARE\WePrintEasy' 'InstallPath'
         $tsConfig = Get-WpeRemoteRegString $cim $HKLM 'SOFTWARE\WePrintEasy' 'ConfigPath'
         $tsPolicy = Get-WpeRemoteRegString $cim $HKLM 'SOFTWARE\WePrintEasy' 'ExecutionPolicy'
+        $tsVersion = Get-WpeRemoteRegString $cim $HKLM 'SOFTWARE\WePrintEasy' 'Version'
         if (-not $tsInstall) {
             $suggest = if ($ConfigPath.StartsWith('\\')) { $ConfigPath } else { Get-WpeText 'Force.SuggestCentralPath' $env:COMPUTERNAME }
             return (& $finish $false (Get-WpeText 'Force.NotInstalled' $fqdn $suggest))
@@ -1255,7 +1516,11 @@ function Invoke-WpeRemoteForce {
         if ($shareOk -and -not (Test-Path -LiteralPath (ConvertTo-WpeAdminSharePath $fqdn $agentPath))) {
             return (& $finish $false (Get-WpeText 'Force.AgentFileMissing' $fqdn $agentPath))
         }
-        & $report 'OK' (Get-WpeText 'Force.Installed' $tsInstall $tsPolicy)
+        & $report 'OK' (Get-WpeText 'Force.Installed' $tsInstall $tsPolicy $(if ($tsVersion) { $tsVersion } else { Get-WpeText 'Check.Install.VersionUnknown' }))
+        # Installationen vor 1.0.6 speichern keine Version - die sind also auch aelter
+        if (-not $tsVersion -or (Test-WpeNewerVersion -Latest $script:WpeVersion -Current $tsVersion)) {
+            & $report 'Warning' (Get-WpeText 'Force.VersionOlder' $fqdn $(if ($tsVersion) { $tsVersion } else { Get-WpeText 'Check.Install.VersionUnknown' }) $script:WpeVersion)
+        }
 
         # 6. Anmelde-Aufgabe
         try {
@@ -1763,9 +2028,11 @@ function Get-WpeSystemStatus {
 
     # 1. Installation
     $installPath = $null
-    try { $installPath = (Get-ItemProperty -LiteralPath $script:RegistryKey -Name InstallPath -ErrorAction Stop).InstallPath } catch { Write-Verbose (Get-WpeText 'Verbose.NotInstalled') }
+    $reg = Get-ItemProperty -LiteralPath $script:RegistryKey -ErrorAction SilentlyContinue
+    if ($reg -and $reg.PSObject.Properties['InstallPath']) { $installPath = [string]$reg.InstallPath } else { Write-Verbose (Get-WpeText 'Verbose.NotInstalled') }
     if ($installPath -and (Test-Path -LiteralPath (Join-Path $installPath 'WePrintEasy-Agent.ps1'))) {
-        Add-Result 'Install' 'OK' $installPath
+        $version = if ($reg.PSObject.Properties['Version'] -and $reg.Version) { [string]$reg.Version } else { Get-WpeText 'Check.Install.VersionUnknown' }
+        Add-Result 'Install' 'OK' (Get-WpeText 'Check.Install.Ok' $installPath $version)
     } else {
         Add-Result 'Install' 'Error' (Get-WpeText 'Check.Install.Missing') 'Install'
         $installPath = $null
@@ -1807,6 +2074,7 @@ function Get-WpeSystemStatus {
         try {
             $config = Read-WpeConfig -Path $ConfigPath
             Add-Result 'ConfigRead' 'OK' $ConfigPath
+            if ($config.Problems) { Add-Result 'ConfigValues' 'Warning' ($config.Problems -join ' ') }
         } catch {
             Add-Result 'ConfigRead' 'Error' $_.Exception.Message
         }
@@ -1817,6 +2085,18 @@ function Get-WpeSystemStatus {
         Add-Result 'ConfigWrite' 'OK' (Get-WpeText 'Check.ConfigWrite.Ok')
     } else {
         Add-Result 'ConfigWrite' 'Warning' (Get-WpeText 'Check.ConfigWrite.No')
+    }
+
+    # 3b. Versionen der Server, die diese Konfiguration nutzen
+    $hosts = @(Get-WpeHost -ConfigPath $ConfigPath)
+    if ($hosts) {
+        $hs = Get-WpeHostVersionStatus -Hosts $hosts
+        $label = { param($h) '{0} ({1})' -f $h.ComputerName, $(if ($h.Version) { $h.Version } else { '?' }) }
+        if ($hs.Outdated) {
+            Add-Result 'Hosts' 'Warning' (Get-WpeText 'Check.Hosts.Outdated' (($hs.Outdated | ForEach-Object { & $label $_ }) -join ', ') $hs.Newest)
+        } else {
+            Add-Result 'Hosts' 'OK' (Get-WpeText 'Check.Hosts.Ok' $hosts.Count $hs.Newest (($hosts | Sort-Object ComputerName | ForEach-Object { $_.ComputerName }) -join ', '))
+        }
     }
 
     # 4. Zuweisungen
@@ -1915,6 +2195,8 @@ Export-ModuleMember -Function @(
     'Set-WpePrinterCatalog', 'Install-WpePrinterDriver', 'Get-WpeAgentLogPath',
     'Get-WpeExecutionPolicy', 'Get-WpeHiddenLaunch', 'Get-WpeSignatureStatus',
     'Measure-WpeEditDistance', 'Get-WpeAdComputer', 'Invoke-WpeRemoteForce',
+    'Get-WpeAgentProcess', 'Restart-WpeAgent',
+    'Get-WpeHostDirectory', 'Register-WpeHost', 'Unregister-WpeHost', 'Get-WpeHost', 'Get-WpeHostVersionStatus',
     'Get-WpeAboutInfo', 'Get-WpeSystemInfo', 'Get-WpeIssueUrl',
     'ConvertTo-WpeVersion', 'ConvertTo-WpeLatestRelease', 'Get-WpeLatestRelease', 'Test-WpeNewerVersion',
     'Test-WpeUpdateCheckDue', 'Set-WpeUpdateCheckTime', 'Test-WpeDownload', 'Save-WpeUpdate'

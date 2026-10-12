@@ -17,6 +17,9 @@
     - legt eine Verknuepfung unter "Windows-Tools" an
     - signiert optional alle Skripte (Authenticode); Agent und Verwaltung
       starten dann mit "-ExecutionPolicy AllSigned" statt "Bypass"
+    - traegt den Server mit Version neben der Konfiguration ein (Ordner "hosts")
+    - startet bei einem Update laufende Agenten in Benutzersitzungen mit der
+      neuen Version neu
 
     Das Skript kann gefahrlos erneut ausgefuehrt werden (Update). Eine einmal
     eingerichtete Signierung bleibt bei Updates erhalten (Abschalten: -NoSigning).
@@ -102,6 +105,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Agenten, die vorher gestartet wurden, laufen noch mit der alten Version (Schritt 9)
+$installStart = Get-Date
 $source = Join-Path $PSScriptRoot 'src'
 $taskName = 'WePrintEasy Agent'
 $taskPath = '\WePrintEasy\'
@@ -242,6 +247,8 @@ Set-ItemProperty -LiteralPath $regKey -Name ConfigPath -Value $ConfigPath
 Set-ItemProperty -LiteralPath $regKey -Name InstallPath -Value $InstallPath
 Set-ItemProperty -LiteralPath $regKey -Name ExecutionPolicy -Value $execPolicy
 Set-ItemProperty -LiteralPath $regKey -Name Language -Value $Language
+# Fuer "Erzwingen" und die Versionsuebersicht der Farm
+Set-ItemProperty -LiteralPath $regKey -Name Version -Value (Get-WpeAboutInfo).Version
 if ($cert) {
     Set-ItemProperty -LiteralPath $regKey -Name SigningThumbprint -Value $cert.Thumbprint
     Set-ItemProperty -LiteralPath $regKey -Name SigningCertCreated -Value ([int]$certCreated) -Type DWord
@@ -441,6 +448,29 @@ if (-not $NoShortcut) {
     $lnk.IconLocation = "$(Join-Path $InstallPath 'WePrintEasy.ico'),0"
     $lnk.Description = Get-WpeText 'Install.ShortcutDescription'
     $lnk.Save()
+}
+
+# --- 9. Server mit Version eintragen (Systempruefung zeigt veraltete Server der Farm) -----------
+if ($configOk) {
+    try {
+        Register-WpeHost -ConfigPath $ConfigPath -InstallPath $InstallPath -Confirm:$false
+    } catch {
+        Write-Warn (Get-WpeText 'Install.HostFailed' (Get-WpeHostDirectory $ConfigPath) $_.Exception.Message)
+    }
+}
+
+# --- 10. Laufende Agenten mit der neuen Version neu starten ----------------------------
+# Sonst liefen sie mit der alten Version weiter, bis sich der Benutzer abmeldet (Trennen genuegt nicht)
+$running = @()
+try { $running = @(Get-WpeAgentProcess | Where-Object { $_.Started -lt $installStart }) } catch { Write-Warn (Get-WpeText 'Install.AgentsUnknown' $_.Exception.Message) }
+if ($running) {
+    Write-Step (Get-WpeText 'Install.RestartAgents' $running.Count)
+    foreach ($r in Restart-WpeAgent -InstallPath $InstallPath -StartedBefore $installStart -Confirm:$false) {
+        switch ($r.Status) {
+            'Restarted' { Write-Host "    $(Get-WpeText 'Install.AgentRestarted' $r.User $r.SessionId)" }
+            default { Write-Warn (Get-WpeText 'Install.AgentNotRestarted' $r.User $r.SessionId $r.Message) }
+        }
+    }
 }
 
 Write-Host ''

@@ -582,6 +582,7 @@ function Show-WpeAboutDialog {
 #region Update-Pruefung -------------------------------------------------------
 
 $script:WpeUpdateJob = $null
+$script:WpeUpdateDownload = $null
 
 function Start-WpeUpdateCheck {
     <#
@@ -595,6 +596,11 @@ function Start-WpeUpdateCheck {
         [System.Windows.Forms.ToolStripStatusLabel]$StatusLabel
     )
     if ($script:WpeScreenshotDir -or $script:WpeUpdateJob) { return }
+    if ($script:WpeUpdateDownload) {
+        # Laeuft schon ein Download: nur wieder anzeigen, dass er laeuft
+        if ($Manual -and $StatusLabel) { $StatusLabel.Text = $script:WpeUpdateDownload.Text }
+        return
+    }
     if (-not $Manual) {
         if (-not (Test-WpeUpdateCheckDue)) { return }
         Set-WpeUpdateCheckTime
@@ -692,18 +698,50 @@ function Show-WpeUpdatePrompt {
 }
 
 function Invoke-WpeUpdate {
-    <# Laedt das Setup (SHA-256 geprueft), startet es in der eingestellten Sprache und beendet das Programm. #>
+    <#
+        Laedt das Setup im Hintergrund (SHA-256 geprueft), ohne das Fenster zu blockieren - bei
+        langsamer Leitung dauert das. Danach startet es in der eingestellten Sprache und beendet das Programm.
+    #>
     param([Parameter(Mandatory)]$Release, [Parameter(Mandatory)][System.Windows.Forms.Form]$Owner, [System.Windows.Forms.ToolStripStatusLabel]$StatusLabel)
-    $oldStatus = if ($StatusLabel) { $StatusLabel.Text } else { '' }
-    if ($StatusLabel) { $StatusLabel.Text = Get-WpeText 'UpdateCheck.Downloading' $Release.Version; $Owner.Refresh() }
-    try {
-        $path = Invoke-WpeWithWaitCursor $Owner { Save-WpeUpdate -Release $Release }
-    } catch {
-        if ($StatusLabel) { $StatusLabel.Text = $oldStatus }
-        Show-WpeMessage (Get-WpeText 'UpdateCheck.DownloadFailed' $_.Exception.Message) 'Error'
+    if ($script:WpeUpdateDownload) { return }
+    $text = Get-WpeText 'UpdateCheck.Downloading' $Release.Version
+    $ps = [PowerShell]::Create()
+    [void]$ps.AddScript({
+            param($ModulePath, $Language, $Release)
+            try {
+                Import-Module $ModulePath -Force -ErrorAction Stop
+                Set-WpeLanguage $Language
+                @{ Path = (Save-WpeUpdate -Release $Release); Error = '' }
+            } catch { @{ Path = $null; Error = $_.Exception.Message } }
+        }.ToString()).AddArgument((Get-Module WePrintEasy).Path).AddArgument((Get-WpeLanguage)).AddArgument($Release)
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 250
+    $script:WpeUpdateDownload = @{ PS = $ps; Handle = $ps.BeginInvoke(); Timer = $timer; Owner = $Owner; Status = $StatusLabel; Text = $text }
+    if ($StatusLabel) { $StatusLabel.Text = $text }
+    $timer.Add_Tick({ Complete-WpeUpdate })
+    $timer.Start()
+}
+
+function Complete-WpeUpdate {
+    <# Timer: startet nach dem Download das Setup (oder meldet den Fehler). #>
+    $job = $script:WpeUpdateDownload
+    if (-not $job -or -not $job.Handle.IsCompleted) { return }
+    # Ist gerade ein Dialog offen (Hauptfenster gesperrt), erst nach dessen Schliessen weitermachen
+    if (-not $job.Owner.IsDisposed -and -not $job.Owner.Enabled) { return }
+    $job.Timer.Stop()
+    $job.Timer.Dispose()
+    $script:WpeUpdateDownload = $null
+    try { $result = @($job.PS.EndInvoke($job.Handle))[0] } catch { $result = @{ Path = $null; Error = $_.Exception.Message } }
+    $job.PS.Dispose()
+    # Statuszeile nur leeren, wenn sie noch den Download anzeigt (das Fenster blieb ja bedienbar)
+    if ($job.Status -and $job.Status.Text -eq $job.Text) { $job.Status.Text = '' }
+    $Owner = $job.Owner
+    if ($Owner.IsDisposed) { return }
+    $path = if ($result) { $result.Path } else { $null }
+    if (-not $path) {
+        Show-WpeMessage (Get-WpeText 'UpdateCheck.DownloadFailed' $(if ($result -and $result.Error) { $result.Error } else { 'no response' })) 'Error'
         return
     }
-    if ($StatusLabel) { $StatusLabel.Text = $oldStatus }
     try {
         # Das Setup braucht Administratorrechte; es erkennt die Installation und aktualisiert sie
         Start-Process -FilePath $path -ArgumentList "/LANG=$(Get-WpeLanguage)" -Verb RunAs -ErrorAction Stop

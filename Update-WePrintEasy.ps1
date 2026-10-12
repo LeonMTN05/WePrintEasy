@@ -11,8 +11,7 @@
       - Editor-Gruppe, RDS-Richtlinie, Verknüpfung unter Windows-Tools
     Anschließend wird die Systemprüfung angezeigt.
 
-    Laufende Agenten in Benutzersitzungen arbeiten bis zur nächsten Anmeldung
-    mit der alten Version weiter.
+    Laufende Agenten in Benutzersitzungen werden mit der neuen Version neu gestartet.
 
 .PARAMETER NoPause
     Am Ende nicht auf eine Taste warten (für automatisierte Updates).
@@ -87,8 +86,6 @@ $admins = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.e
 if ($admins) {
     Write-Host (Get-WpeText 'Update.AdminOpen' $admins.Count) -ForegroundColor Yellow
 }
-$agents = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -like '*WePrintEasy-Agent.ps1*' })
 
 # --- Update ---------------------------------------------------------------------------
 $params = @{ InstallPath = $installPath; Language = (Get-WpeLanguage) }
@@ -128,9 +125,6 @@ foreach ($c in Get-WpeSystemStatus) {
     Write-Host ('  {0,-8} {1,-24} {2}' -f (Get-WpeText "Status.$($c.Status)"), $c.Check, $c.Detail) -ForegroundColor $color
 }
 Write-Host ''
-if ($agents) {
-    Write-Host (Get-WpeText 'Update.AgentsRunning' $agents.Count) -ForegroundColor Yellow
-}
 if ($failed) {
     Write-Host (Get-WpeText 'Update.DoneErrors' $failed) -ForegroundColor Red
     Wait-Exit 1

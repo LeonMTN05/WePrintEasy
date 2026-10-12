@@ -8,7 +8,7 @@
 Set at every logon – and, if you like, kept in place for the entire session.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.5-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.6-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-requirements)
@@ -116,7 +116,7 @@ Alternative to the ZIP: a single `.exe` with an entry under **Apps / Programs an
 
 ```powershell
 # Unattended (exit code 0 = success, 10 = failed, log: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.5.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.6.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -148,7 +148,7 @@ settings: configuration path, assignments, printer list, language, signing, edit
 and shortcut. At the end it shows the health check.
 
 > [!NOTE]
-> Agents already running in user sessions use the new version from the next logon on.
+> Agents already running in user sessions are restarted with the new version – disconnected sessions included.
 > Installations from before the language selection stay German.
 > For automated updates: `.\Update-WePrintEasy.ps1 -NoPause`
 
@@ -191,6 +191,10 @@ So that all servers use the same assignments, store the configuration centrally:
    ```powershell
    .\Install-WePrintEasy.ps1 -ConfigPath '\\fs01\WePrintEasy$\config.json' -PrintServer fs01 -DisableClientDefaultPrinter
    ```
+
+Every server registers itself with its version in the `hosts` folder next to the configuration during
+installation and update. The **Setup check** tab of every server then shows where in the farm an older
+version is still running (servers with a version before 1.0.6 only appear after their update).
 
 With a local configuration, `-EditorGroup 'COMPANY\PrinterAdmins'` grants a group the right to
 maintain assignments without administrator rights.
@@ -318,8 +322,8 @@ added – and can install missing drivers.
 <summary><b>"Setup check" tab</b></summary>
 <br>
 
-Health check with traffic lights: installation, logon task, configuration, write access,
-assignments, RDS policies and, for every print server in use: reachable, shares present, drivers
+Health check with traffic lights: installation and version, logon task, configuration, write access,
+versions of the other servers using the same configuration, assignments, RDS policies and, for every print server in use: reachable, shares present, drivers
 installed locally. **Fix selected item** sets e.g. the RDS policy. **Run agent for me now** tests the
 agent in your own session.
 
@@ -386,7 +390,7 @@ Remote Desktop Session Host → Printer Redirection →`
 the result live:
 
 1. User in AD and a valid assignment (direct or via a group)
-2. Terminal server: DNS (with a suggestion for typos), connection, WePrintEasy installed, logon task enabled
+2. Terminal server: DNS (with a suggestion for typos), connection, WePrintEasy installed (and which version), logon task enabled
 3. Does the terminal server read **the same configuration** as the management program?
 4. Is the user logged on? Current default printer, printer connection, is the agent running in the session?
 5. Starts the agent **once, immediately, in the user's session** (temporary scheduled task,
@@ -421,7 +425,7 @@ In PowerShell: `Invoke-WpeRemoteForce -ComputerName TS01 -UserName jdoe`
 .\Uninstall-WePrintEasy.ps1 -RemoveConfig -RemoveClientDefaultPrinterPolicy
 ```
 
-A certificate created with `-SelfSignedCertificate` is always removed as well.
+Agents still running in user sessions are stopped. A certificate created with `-SelfSignedCertificate` is always removed as well.
 Set up with the Windows installer: uninstall via *Apps / Programs and Features*.
 
 ## 📁 Project structure

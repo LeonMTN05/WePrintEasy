@@ -4,6 +4,8 @@
 .SYNOPSIS
     Entfernt WePrintEasy von einem Terminalserver.
 
+    Laufende Agenten in Benutzersitzungen werden beendet.
+
 .PARAMETER RemoveConfig
     Loescht zusaetzlich die Konfigurationsdatei (nur bei lokaler Konfiguration).
 
@@ -44,6 +46,18 @@ $remove = Get-WpeText 'Uninstall.Remove'
 foreach ($task in @(Get-ScheduledTask -TaskPath '\WePrintEasy\' -ErrorAction SilentlyContinue)) {
     if ($PSCmdlet.ShouldProcess((Get-WpeText 'Uninstall.Task' $task.TaskName), $remove)) { $task | Unregister-ScheduledTask -Confirm:$false }
 }
+
+# Laufende Agenten beenden - sonst setzen sie den Drucker bis zur Abmeldung weiter zurueck
+$agents = @()
+try { $agents = @(Get-WpeAgentProcess) } catch { Write-Warning (Get-WpeText 'Install.AgentsUnknown' $_.Exception.Message) }
+foreach ($a in $agents) {
+    if ($PSCmdlet.ShouldProcess((Get-WpeText 'Agent.ProcessLabel' $a.User $a.SessionId), (Get-WpeText 'Uninstall.Stop'))) {
+        Stop-Process -Id $a.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Eintrag dieses Servers in der Versionsuebersicht (bei zentraler Konfiguration fuer die anderen Server)
+try { Unregister-WpeHost -ConfigPath $configPath -Confirm:$false } catch { Write-Warning (Get-WpeText 'Uninstall.HostKept' $_.Exception.Message) }
 
 foreach ($lnk in Get-WpeShortcutPath -All) {
     if ((Test-Path -LiteralPath $lnk) -and $PSCmdlet.ShouldProcess($lnk, $remove)) { Remove-Item -LiteralPath $lnk -Force }

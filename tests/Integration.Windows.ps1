@@ -56,6 +56,10 @@ function Wait-Until {
     return [bool](& $Condition)
 }
 function Get-LogText { if (Test-Path $userLog) { Get-Content -LiteralPath $userLog -Raw -Encoding UTF8 } else { '' } }
+# Nur Agenten dieser Sitzung - auf einem Testserver koennen andere Benutzer angemeldet sein
+$mySession = [Diagnostics.Process]::GetCurrentProcess().SessionId
+# Komma: auch ein einzelner Agent bleibt ein Array (sonst fehlt .Count bei PSCustomObject in PowerShell 5.1)
+function Get-MyAgent { , @(Get-WpeAgentProcess | Where-Object { $_.SessionId -eq $mySession }) }
 
 Import-Module (Join-Path $root 'src\WePrintEasy.psm1') -Force
 Write-Host "Rechner: $server  Benutzer: $env:USERDOMAIN\$env:USERNAME  OS: $((Get-CimInstance Win32_OperatingSystem).Caption)  PS: $($PSVersionTable.PSVersion)"
@@ -171,6 +175,8 @@ Assert 'Updater: signiert weiter mit demselben Zertifikat' { (Get-ItemProperty '
 # =============================================================================
 }
 Invoke-Section '3. Anmelde-Agent mit echten Druckern' {
+# Protokolltexte werden englisch geprueft - eine vorhandene Konfiguration (Testserver) koennte eine andere Sprache vorgeben
+$cfg = Read-WpeConfig -Path $cfgPath; $cfg.Settings.Language = ''; Save-WpeConfig -Config $cfg -Path $cfgPath -Confirm:$false
 Remove-Item $userLog -ErrorAction SilentlyContinue
 Set-WpeDefaultPrinter -Name 'WPE Test 2' -Confirm:$false
 Assert 'Ausgangslage: Standarddrucker WPE Test 2' { (Get-WpeDefaultPrinter) -eq 'WPE Test 2' }
@@ -243,8 +249,18 @@ Assert 'Zweite Instanz (Wiederverbindung) beendet sich sofort' { $second.WaitFor
 Assert 'Laufender Agent startet Anmeldephase neu' { Wait-Until { (Get-LogText) -match 'reconnected' } 10 }
 Set-WpeAssignment -Type Group -Name 'Users' -Sid 'S-1-5-32-545' -Printer 'WPE Test 4' -Priority 50 | Out-Null
 Assert 'Geaenderte Zuweisung wird ohne Neuanmeldung uebernommen (<= 15 s)' { Wait-Until { (Get-WpeDefaultPrinter) -eq 'WPE Test 4' } 15 }
-Assert 'Nur eine Agent-Instanz pro Sitzung' { @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*WePrintEasy-Agent.ps1*' }).Count -eq 1 }
-Stop-Process -Id $agent.Id -Force
+Assert 'Nur eine Agent-Instanz pro Sitzung' { (Get-MyAgent).Count -eq 1 }
+# Update: der laufende Agent wird mit der neuen Version neu gestartet (sonst liefe er bis zur Abmeldung alt weiter)
+& (Join-Path $root 'Install-WePrintEasy.ps1') *>&1 | Out-File (Join-Path $OutDir 'install-restart.log') -Encoding utf8
+Get-Content (Join-Path $OutDir 'install-restart.log') | Select-String 'Agent|agent' | ForEach-Object { Write-Host "    | $_" }
+$restarted = Get-MyAgent
+Assert 'Update startet den laufenden Agenten neu (alter beendet, genau ein neuer)' { $agent.HasExited -and $restarted.Count -eq 1 -and $restarted[0].ProcessId -ne $agent.Id }
+Set-WpeDefaultPrinter -Name 'WPE Test 2' -Confirm:$false
+Assert 'Neu gestarteter Agent setzt weiter zurueck (<= 15 s)' { Wait-Until { (Get-WpeDefaultPrinter) -eq 'WPE Test 4' } 15 }
+Assert 'Keine Neustart-Aufgaben uebrig' { @(Get-ScheduledTask -TaskPath '\WePrintEasy\' | Where-Object TaskName -like 'Restart *').Count -eq 0 }
+Assert 'Registry und Versionsuebersicht: installierte Version' { $v = (Get-WpeAboutInfo).Version; (Get-ItemProperty 'HKLM:\SOFTWARE\WePrintEasy').Version -eq $v -and (@(Get-WpeHost) | Where-Object ComputerName -eq $env:COMPUTERNAME).Version -eq $v }
+foreach ($r in Get-MyAgent) { Stop-Process -Id $r.ProcessId -Force -ErrorAction SilentlyContinue }
+if (-not $agent.HasExited) { Stop-Process -Id $agent.Id -Force }
 Copy-Item $userLog (Join-Path $OutDir 'agent.log') -ErrorAction SilentlyContinue
 Write-Host '    Agent-Protokoll:'; Get-Content $userLog | ForEach-Object { Write-Host "    | $_" }
 
@@ -264,7 +280,10 @@ $cfg.Settings.Language = ''; Save-WpeConfig -Config $cfg -Path $cfgPath -Confirm
 # =============================================================================
 }
 Invoke-Section '4. Deinstallation' {
+$agent = Invoke-Agent
+Assert 'Vorbereitung: Agent laeuft' { Wait-Until { (Get-MyAgent).Count -eq 1 } 10 }
 & (Join-Path $root 'Uninstall-WePrintEasy.ps1') -RemoveConfig -RemoveClientDefaultPrinterPolicy -Confirm:$false *>&1 | Out-Null
+Assert 'Laufender Agent wird beendet' { $agent.WaitForExit(10000) }
 Assert 'Aufgabe entfernt' { -not (Get-ScheduledTask -TaskPath '\WePrintEasy\' -TaskName 'WePrintEasy Agent' -ErrorAction SilentlyContinue) }
 Assert 'Programmordner entfernt' { -not (Test-Path $installDir) }
 Assert 'Registry entfernt' { -not (Test-Path 'HKLM:\SOFTWARE\WePrintEasy') }
