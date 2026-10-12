@@ -8,7 +8,7 @@
 Gesetzt bei jeder Anmeldung – und auf Wunsch festgehalten während der ganzen Sitzung.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.9-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.10-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-systemvoraussetzungen)
@@ -117,7 +117,7 @@ Alternative zum ZIP: eine einzelne `.exe` mit Eintrag unter **Apps / Programme u
 
 ```powershell
 # Unbeaufsichtigt (Rückgabewert 0 = erfolgreich, 10 = fehlgeschlagen, Protokoll: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.9.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.10.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -332,6 +332,9 @@ Systemprüfung mit Ampel: Installation und Version, Anmelde-Aufgabe, Konfigurati
 Versionen der anderen Server mit derselben Konfiguration, Zuweisungen, RDS-Richtlinien sowie für jeden verwendeten Druckserver: erreichbar,
 Freigaben vorhanden, Treiber lokal installiert. **Ausgewählten Punkt beheben** setzt z. B.
 die RDS-Richtlinie. **Agent jetzt für mich ausführen** testet den Agenten in der eigenen Sitzung.
+**Alles neu starten…** (Administratorrechte) startet WePrintEasy in allen Benutzersitzungen dieses Servers neu:
+Agenten und Symbole der Druckerwahl werden beendet und frisch gestartet – auch in Sitzungen, in denen gerade
+kein Agent läuft. Sie lesen die Konfiguration neu ein und setzen den Standarddrucker sofort; die Benutzer merken davon nichts.
 
 </details>
 
@@ -380,6 +383,8 @@ wird nicht beachtet. Die Rechte setzt die Verwaltung beim Speichern der Einstell
 > [!IMPORTANT]
 > Bei **zentraler Konfiguration** (`\\fs01\WePrintEasy$`) brauchen Benutzer auf der **Freigabe** das Recht
 > **Ändern** (statt Lesen). Die NTFS-Rechte begrenzen das Schreiben auf den Ordner `choices` und die eigene Datei.
+> Sonst meldet das Fenster beim Benutzer „Zugriff verweigert“. Die Systemprüfung („Freigabe für die Druckerwahl“) erkennt das
+> und setzt das Recht mit **Ausgewählten Punkt beheben** (Administratorrechte auf dem Fileserver nötig).
 
 ### 🌐 Sprache
 

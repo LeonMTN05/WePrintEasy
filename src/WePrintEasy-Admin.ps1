@@ -678,7 +678,8 @@ $btnFix = New-WpeButton (Get-WpeText 'Admin.Fix') 126 5 200
 $btnRunAgent = New-WpeButton (Get-WpeText 'Admin.RunAgent') 332 5 220
 $btnMyLog = New-WpeButton (Get-WpeText 'Admin.MyLog') 558 5 120
 $btnUndo = New-WpeButton (Get-WpeText 'Admin.Undo') 684 5 230
-$pnlSetupTop.Controls.AddRange(@($btnCheck, $btnFix, $btnRunAgent, $btnMyLog, $btnUndo))
+$btnRestartAll = New-WpeButton (Get-WpeText 'Admin.RestartAll') 920 5 160
+$pnlSetupTop.Controls.AddRange(@($btnCheck, $btnFix, $btnRunAgent, $btnMyLog, $btnUndo, $btnRestartAll))
 
 $lstStatus = New-Object System.Windows.Forms.ListView
 $lstStatus.Dock = 'Fill'
@@ -880,6 +881,34 @@ function Invoke-UndoLastChange {
     $statusLabel.Text = Get-WpeText 'Admin.UndoDone' $when
 }
 
+function Invoke-RestartAll {
+    <# "Alles neu starten": Agenten und Symbole in allen Sitzungen dieses Servers neu starten (mit Rueckfrage). #>
+    $principal = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) { Show-WpeMessage (Get-WpeText 'Admin.RestartAllNoAdmin') 'Warning'; return }
+    if (-not (Confirm-WpeAction (Get-WpeText 'Admin.RestartAllConfirm' $env:COMPUTERNAME))) { return }
+    $installPath = $PSScriptRoot
+    try { $p = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\WePrintEasy' -Name InstallPath -ErrorAction Stop).InstallPath; if ($p -and (Test-Path -LiteralPath (Join-Path $p 'WePrintEasy-Agent.ps1'))) { $installPath = $p } } catch { Write-Verbose $_.Exception.Message }
+    $r = $null
+    try {
+        Invoke-WpeWithWaitCursor $form {
+            $statusLabel.Text = Get-WpeText 'Admin.RestartAllRunning'
+            [System.Windows.Forms.Application]::DoEvents()
+            $script:RestartResult = Restart-WpeAll -InstallPath $installPath -Confirm:$false
+        }
+        $r = $script:RestartResult
+    } catch {
+        Show-WpeMessage (Get-WpeText 'Admin.RestartAllFailed' $_.Exception.Message) 'Error'
+        return
+    }
+    $ok = @($r.Agents | Where-Object { $_.Status -in 'Restarted', 'Started' })
+    $lines = @($r.Agents | ForEach-Object { '{0} ({1}): {2}{3}' -f $_.User, $_.SessionId, (Get-WpeText "Admin.RestartStatus.$($_.Status)"), $(if ($_.Message) { " - $($_.Message)" } else { '' }) })
+    $text = Get-WpeText 'Admin.RestartAllDone' $ok.Count @($r.Agents).Count $r.Trays
+    if ($lines) { $text += "`n`n" + (Format-WpeList $lines 20) } else { $text += "`n`n" + (Get-WpeText 'Admin.RestartAllNoSessions') }
+    $icon = if (@($r.Agents).Count -gt $ok.Count) { 'Warning' } else { 'Info' }
+    Show-WpeMessage $text $icon
+    $statusLabel.Text = Get-WpeText 'Admin.RestartAllStatus' $ok.Count @($r.Agents).Count
+}
+
 function Save-Assignment {
     param([hashtable]$Data)
     $msg = ''
@@ -1079,6 +1108,7 @@ $btnUserLog.Add_Click({
 
 $btnCheck.Add_Click({ Update-StatusList })
 $btnUndo.Add_Click({ Invoke-UndoLastChange })
+$btnRestartAll.Add_Click({ Invoke-RestartAll })
 $btnFix.Add_Click({
         if ($lstStatus.SelectedItems.Count -ne 1) { Show-WpeMessage (Get-WpeText 'Admin.SelectCheck') 'Warning'; return }
         $c = $lstStatus.SelectedItems[0].Tag
@@ -1093,6 +1123,13 @@ $btnFix.Add_Click({
                 'EnableTask' {
                     Enable-ScheduledTask -TaskPath '\WePrintEasy\' -TaskName 'WePrintEasy Agent' | Out-Null
                     Show-WpeMessage (Get-WpeText 'Admin.FixTaskDone')
+                }
+                'ShareAccess' {
+                    $sa = Get-WpeShareAccess -ConfigPath $script:ConfigPath
+                    if (Confirm-WpeAction (Get-WpeText 'Admin.FixShareConfirm' "\\$($sa.Server)\$($sa.Share)" ($sa.ReadOnly -join ', '))) {
+                        Set-WpeShareChangeAccess -ConfigPath $script:ConfigPath -Confirm:$false
+                        Show-WpeMessage (Get-WpeText 'Admin.FixShareDone' "\\$($sa.Server)\$($sa.Share)")
+                    }
                 }
                 'ChoiceFolder' {
                     Initialize-WpeChoiceDirectory -ConfigPath $script:ConfigPath -Confirm:$false

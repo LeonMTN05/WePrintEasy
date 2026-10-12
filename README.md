@@ -8,7 +8,7 @@
 Set at every logon – and, if you like, kept in place for the entire session.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.9-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.10-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-requirements)
@@ -117,7 +117,7 @@ Alternative to the ZIP: a single `.exe` with an entry under **Apps / Programs an
 
 ```powershell
 # Unattended (exit code 0 = success, 10 = failed, log: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.9.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.10.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -329,7 +329,9 @@ added – and can install missing drivers.
 Health check with traffic lights: installation and version, logon task, configuration, write access,
 versions of the other servers using the same configuration, assignments, RDS policies and, for every print server in use: reachable, shares present, drivers
 installed locally. **Fix selected item** sets e.g. the RDS policy. **Run agent for me now** tests the
-agent in your own session.
+agent in your own session. **Restart everything…** (administrator rights) restarts WePrintEasy in all user
+sessions on this server: agents and printer choice icons are stopped and started fresh – also in sessions where
+no agent is running right now. They read the configuration again and set the default printer immediately; users won't notice anything.
 
 </details>
 
@@ -378,6 +380,8 @@ management sets these permissions when the setting is saved (as do setup and upd
 > [!IMPORTANT]
 > With a **central configuration** (`\\fs01\WePrintEasy$`), users need the **Change** permission on the
 > **share** (instead of Read). The NTFS permissions limit writing to the `choices` folder and their own file.
+> Otherwise the user's window reports "Access denied". The health check ("Share for printer choice") detects this
+> and sets the permission with **Fix selected item** (administrator rights on the file server required).
 
 ### 🌐 Language
 

@@ -432,6 +432,8 @@ Group;Lager;\\srv\Lager;20
     Unregister-WpeHost -ConfigPath $farmCfg -Confirm:$false
     Assert 'Unregister-WpeHost entfernt nur den eigenen Eintrag' { -not (Test-Path -LiteralPath $own) -and (Test-Path -LiteralPath (Join-Path $hostDir 'kaputt.json')) }
     Assert 'Get-WpeAgentProcess laeuft ohne Fehler' { $null -eq (@(Get-WpeAgentProcess) | Where-Object { -not $_.ProcessId }) }
+    $sessions = @(Get-WpeUserSession)
+    Assert 'Get-WpeUserSession: je Sitzung ein Eintrag mit Benutzer und SID' { @($sessions | Where-Object { $_.SessionId -le 0 -or -not $_.UserSid -or -not $_.User }).Count -eq 0 -and @($sessions | Group-Object SessionId | Where-Object Count -gt 1).Count -eq 0 }
 
     Write-Host 'App-Symbol'
     $icoBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..\src\WePrintEasy.ico'))

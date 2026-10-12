@@ -259,6 +259,19 @@ Set-WpeDefaultPrinter -Name 'WPE Test 2' -Confirm:$false
 Assert 'Neu gestarteter Agent setzt weiter zurueck (<= 15 s)' { Wait-Until { (Get-WpeDefaultPrinter) -eq 'WPE Test 4' } 15 }
 Assert 'Keine Neustart-Aufgaben uebrig' { @(Get-ScheduledTask -TaskPath '\WePrintEasy\' | Where-Object TaskName -like 'Restart *').Count -eq 0 }
 Assert 'Registry und Versionsuebersicht: installierte Version' { $v = (Get-WpeAboutInfo).Version; (Get-ItemProperty 'HKLM:\SOFTWARE\WePrintEasy').Version -eq $v -and (@(Get-WpeHost) | Where-Object ComputerName -eq $env:COMPUTERNAME).Version -eq $v }
+# "Alles neu starten" (Druckerverwaltung): laufender Agent neu, Sitzung ohne Agent bekommt einen
+$beforeIds = @(Get-MyAgent | ForEach-Object { $_.ProcessId })
+$ra = Restart-WpeAll -InstallPath $installDir -Confirm:$false
+$ra.Agents | ForEach-Object { Write-Host "    | $($_.User) ($($_.SessionId)): $($_.Status) $($_.Message)" }
+$after = Get-MyAgent
+Assert 'Alles neu starten: Agent dieser Sitzung neu gestartet (genau einer, neue Prozess-ID)' { $after.Count -eq 1 -and $beforeIds -notcontains $after[0].ProcessId -and @($ra.Agents | Where-Object Status -eq 'Restarted').Count -ge 1 }
+if (@(Get-WpeUserSession | Where-Object SessionId -eq $mySession).Count) {
+    foreach ($r in Get-MyAgent) { Stop-Process -Id $r.ProcessId -Force; [void](Wait-Process -Id $r.ProcessId -Timeout 10 -ErrorAction SilentlyContinue) }
+    $ra = Restart-WpeAll -InstallPath $installDir -Confirm:$false
+    Assert 'Alles neu starten: Sitzung ohne Agent bekommt einen (Status Started)' { (Get-MyAgent).Count -eq 1 -and @($ra.Agents | Where-Object Status -eq 'Started').Count -ge 1 }
+} else {
+    Write-Host '  [SKIP] Sitzung ohne explorer.exe - Start in einer Sitzung ohne Agent nicht pruefbar.' -ForegroundColor Yellow
+}
 foreach ($r in Get-MyAgent) { Stop-Process -Id $r.ProcessId -Force -ErrorAction SilentlyContinue }
 if (-not $agent.HasExited) { Stop-Process -Id $agent.Id -Force }
 Copy-Item $userLog (Join-Path $OutDir 'agent.log') -ErrorAction SilentlyContinue
@@ -276,6 +289,24 @@ Remove-Item $userLog -ErrorAction SilentlyContinue
 $p = Invoke-Agent -Once
 Assert 'Einstellung Sprache = de: Agent protokolliert deutsch' { (Get-LogText) -match 'Vorgabe: ''WPE Test 6\?'' \(über Gruppe' }
 $cfg.Settings.Language = ''; Save-WpeConfig -Config $cfg -Path $cfgPath -Confirm:$false
+
+# Druckerwahl bei zentraler Konfiguration: Freigabe nur "Lesen" wird erkannt und behoben
+$shareDir = Join-Path $OutDir 'share'
+New-Item -ItemType Directory -Path $shareDir -Force | Out-Null
+$everyone = (New-Object System.Security.Principal.SecurityIdentifier('S-1-1-0')).Translate([System.Security.Principal.NTAccount]).Value
+$admins = (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')).Translate([System.Security.Principal.NTAccount]).Value
+New-SmbShare -Name 'WpeChoiceTest$' -Path $shareDir -ReadAccess $everyone -FullAccess $admins | Out-Null
+try {
+    $shareCfg = "\\$server\WpeChoiceTest$\config.json"
+    $c = Read-WpeConfig -Path $shareCfg; $c.Settings.AllowUserPrinterChoice = $true; Save-WpeConfig -Config $c -Path $shareCfg -Confirm:$false
+    Initialize-WpeChoiceDirectory -ConfigPath $shareCfg -Confirm:$false
+    $r = @(Get-WpeSystemStatus -ConfigPath $shareCfg) | Where-Object Id -eq 'UserChoiceShare'
+    Assert 'Freigabe nur "Lesen": Systempruefung meldet Fehler mit Behebung' { $r.Status -eq 'Error' -and $r.Fix -eq 'ShareAccess' }
+    Set-WpeShareChangeAccess -ConfigPath $shareCfg -Confirm:$false
+    Assert 'Behebung: Benutzer duerfen auf der Freigabe schreiben' { (Get-WpeShareAccess -ConfigPath $shareCfg).Writable -and (@(Get-WpeSystemStatus -ConfigPath $shareCfg) | Where-Object Id -eq 'UserChoiceShare').Status -eq 'OK' }
+} finally {
+    Remove-SmbShare -Name 'WpeChoiceTest$' -Force -ErrorAction SilentlyContinue
+}
 
 # =============================================================================
 }

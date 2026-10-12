@@ -18,7 +18,7 @@ $script:PrinterRegKey    = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\W
 $script:ComputerDomain   = ''   # Zwischenspeicher fuer Get-WpeLdapPrefix
 
 # Version und Projekt - nur hier pflegen
-$script:WpeVersion       = '1.0.9'
+$script:WpeVersion       = '1.0.10'
 $script:WpeAuthor        = 'LeonMTN05'
 $script:WpeAuthorUrl     = 'https://github.com/LeonMTN05'
 $script:WpeProjectUrl    = 'https://github.com/LeonMTN05/WePrintEasy'
@@ -727,7 +727,12 @@ function Save-WpeUserChoice {
     }
     if (-not $PSCmdlet.ShouldProcess($file, (Get-WpeText 'Choice.SaveAction' $PrinterName))) { return }
     # Direkt in die eigene Datei schreiben: Benutzer duerfen im Ordner nur anlegen und ihre eigene Datei aendern
-    [IO.File]::WriteAllText($file, (ConvertTo-Json -InputObject $entry), (New-Object System.Text.UTF8Encoding($false)))
+    try {
+        [IO.File]::WriteAllText($file, (ConvertTo-Json -InputObject $entry), (New-Object System.Text.UTF8Encoding($false)))
+    } catch [System.UnauthorizedAccessException] {
+        # Meist: Freigabe erlaubt Benutzern nur Lesen, oder die Ordnerrechte von choices fehlen
+        throw (Get-WpeText 'Choice.AccessDenied' $dir)
+    }
     return $pattern
 }
 
@@ -856,6 +861,80 @@ function Test-WpeChoiceDirectory {
             try { $o = Get-WpeFileOwnerSid $_.FullName; $o -ne $_.BaseName -and $o -ne $script:AdminsSid } catch { $false }
         } | ForEach-Object { $_.Name })
     [pscustomobject]@{ Status = $(if ($canCreate -and $canModify) { 'OK' } else { 'NoPermission' }); Path = $dir; Foreign = $foreign }
+}
+
+function New-WpeFileServerSession {
+    <# CIM-Verbindung zu einem Fileserver (DCOM, sonst WSMan) mit kurzem Timeout. Administratorrechte dort noetig. #>
+    param([Parameter(Mandatory)][string]$ComputerName)
+    $errors = @()
+    foreach ($proto in 'Dcom', 'Wsman') {
+        $cim = $null
+        try {
+            $cim = New-CimSession -ComputerName $ComputerName -SessionOption (New-CimSessionOption -Protocol $proto) -OperationTimeoutSec 15 -ErrorAction Stop
+            [void](Get-CimInstance -CimSession $cim -ClassName Win32_OperatingSystem -ErrorAction Stop)
+            return $cim
+        } catch {
+            $errors += "${proto}: $($_.Exception.Message.Trim())"
+            if ($cim) { Remove-CimSession $cim }
+        }
+    }
+    throw ($errors -join ' / ')
+}
+
+function Get-WpeShareAccess {
+    <#
+        Freigaberechte der Freigabe, auf der die Konfiguration liegt (\\server\freigabe\...), fuer die
+        Druckerwahl: Duerfen Benutzer dort schreiben? Liefert Server, Share, Writable und ReadOnly (Konten der
+        Benutzergruppen mit nur Lesen). $null bei lokaler Konfiguration. Liest per CIM vom Fileserver
+        (Administratorrechte dort noetig), sonst Fehler.
+    #>
+    [CmdletBinding()]
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    if ($ConfigPath -notmatch '^\\\\([^\\]+)\\([^\\]+)\\') { return $null }
+    $server = $Matches[1]; $share = $Matches[2]
+    $cim = New-WpeFileServerSession $server
+    try {
+        $setting = Get-CimInstance -CimSession $cim -ClassName Win32_LogicalShareSecuritySetting -Filter "Name='$($share -replace "'", "\'")'" -ErrorAction Stop
+        if (-not $setting) { throw (Get-WpeText 'Choice.ShareNotFound' $share $server) }
+        $sd = (Invoke-CimMethod -InputObject $setting -MethodName GetSecurityDescriptor -ErrorAction Stop).Descriptor
+    } finally {
+        Remove-CimSession $cim
+    }
+    # Benutzergruppen: Jeder, Authentifizierte Benutzer, Benutzer, Domaenen-Benutzer (RID 513)
+    $isUsers = { param($sid) $sid -in 'S-1-1-0', 'S-1-5-11', 'S-1-5-32-545' -or $sid -match '^S-1-5-21-.+-513$' }
+    $writeBit = 0x2   # FILE_ADD_FILE / FILE_WRITE_DATA - in "Aendern" und "Vollzugriff" enthalten
+    $writable = $false; $denied = $false
+    $readOnly = New-Object System.Collections.Generic.List[string]
+    foreach ($ace in @($sd.DACL)) {
+        $sid = [string]$ace.Trustee.SIDString
+        if (-not (& $isUsers $sid)) { continue }
+        $name = if ($ace.Trustee.Domain) { "$($ace.Trustee.Domain)\$($ace.Trustee.Name)" } else { [string]$ace.Trustee.Name }
+        $canWrite = ([int64]$ace.AccessMask -band $writeBit) -ne 0
+        if ([int]$ace.AceType -eq 1) { if ($canWrite) { $denied = $true } }
+        elseif ($canWrite) { $writable = $true }
+        else { $readOnly.Add($name) }
+    }
+    [pscustomobject]@{ Server = $server; Share = $share; Writable = ($writable -and -not $denied); ReadOnly = [string[]]$readOnly.ToArray() }
+}
+
+function Set-WpeShareChangeAccess {
+    <#
+        Gibt den Benutzergruppen, die auf der Freigabe der Konfiguration nur "Lesen" haben, das Recht "Aendern"
+        (fuer die Druckerwahl). Wer wo schreiben darf, begrenzen weiter die NTFS-Rechte: Konfiguration nur lesen,
+        im Ordner choices nur die eigene Datei. Administratorrechte auf dem Fileserver noetig.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$ConfigPath = (Get-WpeConfigPath))
+    $access = Get-WpeShareAccess -ConfigPath $ConfigPath
+    if (-not $access -or $access.Writable) { return }
+    if (-not $access.ReadOnly) { throw (Get-WpeText 'Check.UserChoiceShare.NoUsers' "\\$($access.Server)\$($access.Share)") }
+    if (-not $PSCmdlet.ShouldProcess("\\$($access.Server)\$($access.Share)", ($access.ReadOnly -join ', '))) { return }
+    $cim = New-WpeFileServerSession $access.Server
+    try {
+        Grant-SmbShareAccess -CimSession $cim -Name $access.Share -AccountName $access.ReadOnly -AccessRight Change -Force -ErrorAction Stop | Out-Null
+    } finally {
+        Remove-CimSession $cim
+    }
 }
 
 #endregion
@@ -1481,15 +1560,17 @@ function Restart-WpeAgent {
         Je Benutzer: alten Agenten beenden und den neuen wie bei der Anmeldung ueber eine kurzlebige
         Aufgabe in dessen Sitzung starten. Die Aufgabe wird danach entfernt, der Agent laeuft weiter.
         Benutzer mit mehreren Sitzungen bleiben unberuehrt (die Aufgabe startet nur in einer davon).
+        -IncludeSessionsWithoutAgent: auch in Sitzungen ohne laufenden Agenten einen starten ("Alles neu starten").
         Administratorrechte noetig. Rueckgabe je Benutzer: User, SessionId, Status
-        (Restarted, Failed, Skipped) und Message.
+        (Restarted, Started, Failed, Skipped) und Message.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$InstallPath,
         # Nur Agenten, die vor diesem Zeitpunkt gestartet wurden (Beginn des Updates)
         [datetime]$StartedBefore = (Get-Date),
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 30,
+        [switch]$IncludeSessionsWithoutAgent
     )
     $agentFilter = "Name='powershell.exe' AND CommandLine LIKE '%WePrintEasy-Agent.ps1%'"
     $agentPath = Join-Path $InstallPath 'WePrintEasy-Agent.ps1'
@@ -1500,11 +1581,20 @@ function Restart-WpeAgent {
         try { Unregister-ScheduledTask -TaskPath $taskPath -TaskName $old.TaskName -Confirm:$false } catch { Write-Verbose $_.Exception.Message }
     }
 
-    foreach ($g in @(Get-WpeAgentProcess | Where-Object { $_.Started -lt $StartedBefore } | Group-Object -Property UserSid)) {
-        $a = $g.Group[0]
+    $agents = @(Get-WpeAgentProcess)
+    $groups = New-Object System.Collections.ArrayList
+    foreach ($g in @($agents | Where-Object { $_.Started -lt $StartedBefore } | Group-Object -Property UserSid)) { [void]$groups.Add(@($g.Group)) }
+    if ($IncludeSessionsWithoutAgent) {
+        $withAgent = @{}
+        foreach ($p in $agents) { if ($p.UserSid) { $withAgent[$p.UserSid] = $true } }
+        foreach ($g in @(Get-WpeUserSession | Where-Object { $_.UserSid -and -not $withAgent.ContainsKey($_.UserSid) } | Group-Object -Property UserSid)) { [void]$groups.Add(@($g.Group)) }
+    }
+
+    foreach ($group in $groups) {
+        $a = $group[0]
         $result = { param($Status, $Message) [pscustomobject]@{ User = $a.User; SessionId = $a.SessionId; Status = $Status; Message = $Message } }
         if (-not $a.User -or -not $a.UserSid) { & $result 'Skipped' (Get-WpeText 'Agent.RestartNoOwner' $a.ProcessId); continue }
-        if ($g.Count -gt 1) { & $result 'Skipped' (Get-WpeText 'Agent.RestartMultiSession' (($g.Group | ForEach-Object { $_.SessionId }) -join ', ')); continue }
+        if ($group.Count -gt 1) { & $result 'Skipped' (Get-WpeText 'Agent.RestartMultiSession' (($group | ForEach-Object { $_.SessionId }) -join ', ')); continue }
         if (-not $PSCmdlet.ShouldProcess((Get-WpeText 'Agent.ProcessLabel' $a.User $a.SessionId), (Get-WpeText 'Agent.RestartAction'))) { continue }
 
         $taskName = 'Restart {0} {1:yyyyMMdd-HHmmss}' -f ($a.User -replace '^.*\\', ''), (Get-Date)
@@ -1517,9 +1607,11 @@ function Restart-WpeAgent {
             # Erst registrieren, dann beenden: Scheitert die Aufgabe (z. B. Konto unbekannt), laeuft der alte Agent weiter
             [void](Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -InputObject $task -Force)
             $registered = $true
-            Stop-Process -Id $a.ProcessId -Force -ErrorAction Stop
-            # Mutex der Sitzung muss frei sein, sonst weckt der neue Agent nur den alten und beendet sich
-            [void](Wait-Process -Id $a.ProcessId -Timeout 10 -ErrorAction SilentlyContinue)
+            if ($a.ProcessId) {
+                Stop-Process -Id $a.ProcessId -Force -ErrorAction Stop
+                # Mutex der Sitzung muss frei sein, sonst weckt der neue Agent nur den alten und beendet sich
+                [void](Wait-Process -Id $a.ProcessId -Timeout 10 -ErrorAction SilentlyContinue)
+            }
             # Nur neue Prozesse pruefen, und nur per SID: Der Kontoname (GetOwner) fragt den
             # Domaenencontroller und kann bei langsamer Anbindung Sekunden je Prozess dauern
             $known = @{}
@@ -1539,7 +1631,8 @@ function Restart-WpeAgent {
                     } catch { Write-Verbose $_.Exception.Message }
                 }
             } while (-not $started -and (Get-Date) -lt $deadline)
-            if ($started) { & $result 'Restarted' '' } else { & $result 'Failed' (Get-WpeText 'Agent.RestartNotStarted' $TimeoutSeconds) }
+            if (-not $started) { & $result 'Failed' (Get-WpeText 'Agent.RestartNotStarted' $TimeoutSeconds) }
+            elseif ($a.ProcessId) { & $result 'Restarted' '' } else { & $result 'Started' '' }
         } catch {
             & $result 'Failed' $_.Exception.Message
         } finally {
@@ -1548,6 +1641,52 @@ function Restart-WpeAgent {
             }
         }
     }
+}
+
+function Get-WpeUserSession {
+    <#
+        Angemeldete Benutzersitzungen dieses Rechners (je Sitzung ein Eintrag), erkannt an der Oberflaeche
+        der Sitzung: explorer.exe, bei RemoteApp rdpinit.exe/rdpshell.exe. Form wie Get-WpeAgentProcess,
+        ohne ProcessId. Fuer fremde Sitzungen Administratorrechte noetig.
+    #>
+    [CmdletBinding()]
+    param()
+    $seen = @{}
+    $shells = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='explorer.exe' OR Name='rdpinit.exe' OR Name='rdpshell.exe'" -ErrorAction Stop |
+            Where-Object { $_.SessionId -gt 0 })
+    foreach ($p in $shells) {
+        if ($seen.ContainsKey([int]$p.SessionId)) { continue }
+        try {
+            $s = Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid
+            $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner
+            if ($s.ReturnValue -ne 0 -or $o.ReturnValue -ne 0) { continue }
+            $seen[[int]$p.SessionId] = $true
+            [pscustomobject]@{
+                ProcessId = $null; SessionId = [int]$p.SessionId; Started = $null; UserSid = [string]$s.Sid
+                User      = if ($o.Domain) { "$($o.Domain)\$($o.User)" } else { [string]$o.User }
+            }
+        } catch { Write-Verbose $_.Exception.Message }
+    }
+}
+
+function Restart-WpeAll {
+    <#
+        "Alles neu starten" (Druckerverwaltung, Administratorrechte): beendet die Symbole fuer die Druckerwahl,
+        startet alle Agenten dieses Rechners neu und startet in Sitzungen ohne Agent einen. Die neuen Agenten
+        lesen die Konfiguration frisch ein, setzen den Drucker sofort und starten bei Bedarf das Symbol.
+        Rueckgabe: Trays (Anzahl beendeter Symbole) und Agents (Ergebnis je Benutzer wie Restart-WpeAgent).
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$InstallPath, [int]$TimeoutSeconds = 30)
+    $begin = Get-Date
+    $trays = 0
+    foreach ($t in @(Get-WpeTrayProcess)) {
+        if (-not $PSCmdlet.ShouldProcess((Get-WpeText 'Uninstall.Tray' $t.SessionId), (Get-WpeText 'Uninstall.Stop'))) { continue }
+        Stop-Process -Id $t.ProcessId -Force -ErrorAction SilentlyContinue
+        $trays++
+    }
+    $agents = @(Restart-WpeAgent -InstallPath $InstallPath -StartedBefore $begin -TimeoutSeconds $TimeoutSeconds -IncludeSessionsWithoutAgent)
+    [pscustomobject]@{ Trays = $trays; Agents = $agents }
 }
 
 function Test-WpeTrayRunning {
@@ -2464,12 +2603,26 @@ function Get-WpeSystemStatus {
             } elseif ($cd.Foreign) {
                 Add-Result 'UserChoice' 'Warning' (Get-WpeText 'Check.UserChoice.Foreign' ($cd.Foreign -join ', ') $cd.Path)
             } else {
-                $detail = Get-WpeText 'Check.UserChoice.Ok' $n
-                if ($ConfigPath.StartsWith('\\')) { $detail += ' ' + (Get-WpeText 'Check.UserChoice.ShareHint') }
-                Add-Result 'UserChoice' 'OK' $detail
+                Add-Result 'UserChoice' 'OK' (Get-WpeText 'Check.UserChoice.Ok' $n)
             }
         } catch {
             Add-Result 'UserChoice' 'Error' $_.Exception.Message 'ChoiceFolder'
+        }
+        # Zentrale Konfiguration: Die Freigabe muss Benutzern Schreiben erlauben (sonst "Zugriff verweigert")
+        if ($ConfigPath.StartsWith('\\')) {
+            try {
+                $sa = Get-WpeShareAccess -ConfigPath $ConfigPath
+                $unc = "\\$($sa.Server)\$($sa.Share)"
+                if ($sa.Writable) {
+                    Add-Result 'UserChoiceShare' 'OK' (Get-WpeText 'Check.UserChoiceShare.Ok' $unc)
+                } elseif ($sa.ReadOnly) {
+                    Add-Result 'UserChoiceShare' 'Error' (Get-WpeText 'Check.UserChoiceShare.ReadOnly' $unc ($sa.ReadOnly -join ', ')) 'ShareAccess'
+                } else {
+                    Add-Result 'UserChoiceShare' 'Error' (Get-WpeText 'Check.UserChoiceShare.NoUsers' $unc)
+                }
+            } catch {
+                Add-Result 'UserChoiceShare' 'Warning' (Get-WpeText 'Check.UserChoiceShare.Unknown' $_.Exception.Message)
+            }
         }
     }
 
@@ -2559,9 +2712,10 @@ Export-ModuleMember -Function @(
     'Set-WpePrinterCatalog', 'Install-WpePrinterDriver', 'Get-WpeAgentLogPath',
     'Get-WpeExecutionPolicy', 'Get-WpeHiddenLaunch', 'Get-WpeSignatureStatus',
     'Measure-WpeEditDistance', 'Get-WpeAdComputer', 'Invoke-WpeRemoteForce',
-    'Get-WpeAgentProcess', 'Restart-WpeAgent', 'Test-WpeTrayRunning', 'Start-WpeTray', 'Get-WpeTrayProcess',
+    'Get-WpeAgentProcess', 'Restart-WpeAgent', 'Get-WpeUserSession', 'Restart-WpeAll', 'Test-WpeTrayRunning', 'Start-WpeTray', 'Get-WpeTrayProcess',
     'Get-WpeChoiceDirectory', 'ConvertTo-WpeChoicePattern', 'Read-WpeUserChoice', 'Save-WpeUserChoice', 'Remove-WpeUserChoice',
     'Test-WpeChangedByUser', 'Merge-WpeUserChoice', 'Read-WpeEffectiveConfig', 'Initialize-WpeChoiceDirectory', 'Test-WpeChoiceDirectory',
+    'Get-WpeShareAccess', 'Set-WpeShareChangeAccess',
     'Get-WpeHostDirectory', 'Register-WpeHost', 'Unregister-WpeHost', 'Get-WpeHost', 'Get-WpeHostVersionStatus',
     'Get-WpeAboutInfo', 'Get-WpeSystemInfo', 'Get-WpeIssueUrl',
     'ConvertTo-WpeVersion', 'ConvertTo-WpeLatestRelease', 'Get-WpeLatestRelease', 'Test-WpeNewerVersion',
