@@ -540,7 +540,13 @@ $btnUpdate.Anchor = 'Top, Right'
 $header.Controls.Add($btnUpdate)
 $btnUpdate.Add_Click({ Start-WpeUpdateCheck -Owner $form -Manual -StatusLabel $statusLabel })
 $form.KeyPreview = $true
-$form.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::F1) { $_.Handled = $true; Show-WpeAboutDialog -ConfigPath $script:ConfigPath } })
+$form.Add_KeyDown({
+        if ($_.KeyCode -eq [System.Windows.Forms.Keys]::F1) { $_.Handled = $true; Show-WpeAboutDialog -ConfigPath $script:ConfigPath }
+        # Strg+Z: letzte Aenderung rueckgaengig - ausser in Textfeldern, dort gilt es fuer den Text
+        if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Z -and $_.Control -and -not $_.Alt -and $form.ActiveControl -isnot [System.Windows.Forms.TextBoxBase]) {
+            $_.Handled = $true; $_.SuppressKeyPress = $true; Invoke-UndoLastChange
+        }
+    })
 
 $status = New-Object System.Windows.Forms.StatusStrip
 $statusLabel = New-Object System.Windows.Forms.ToolStripStatusLabel
@@ -595,6 +601,8 @@ foreach ($c in 'TypeKey', 'Type', 'Name', 'DisplayName', 'Printer', 'Priority', 
     [void]$table.Columns.Add($c)
 }
 $grid = New-Grid $table
+# Mehrere Zuweisungen auf einmal entfernen (Strg/Umschalt); Bearbeiten und Erzwingen brauchen genau eine
+$grid.MultiSelect = $true
 $tabAssign.Controls.Add($grid)
 $grid.BringToFront()
 
@@ -620,6 +628,7 @@ $pnlPrnTop.Controls.AddRange(@($btnImport, $btnPrnRemove, $lblPrnInfo))
 $prnTable = New-Object System.Data.DataTable
 foreach ($c in 'Printer', 'Location', 'Comment', 'Driver', 'Assigned') { [void]$prnTable.Columns.Add($c) }
 $prnGrid = New-Grid $prnTable
+$prnGrid.MultiSelect = $true
 $tabPrinters.Controls.Add($prnGrid)
 $prnGrid.BringToFront()
 $prnGrid.Add_DataBindingComplete({
@@ -664,7 +673,8 @@ $btnCheck = New-WpeButton (Get-WpeText 'Admin.Recheck') 0 5 120
 $btnFix = New-WpeButton (Get-WpeText 'Admin.Fix') 126 5 200
 $btnRunAgent = New-WpeButton (Get-WpeText 'Admin.RunAgent') 332 5 220
 $btnMyLog = New-WpeButton (Get-WpeText 'Admin.MyLog') 558 5 120
-$pnlSetupTop.Controls.AddRange(@($btnCheck, $btnFix, $btnRunAgent, $btnMyLog))
+$btnUndo = New-WpeButton (Get-WpeText 'Admin.Undo') 684 5 230
+$pnlSetupTop.Controls.AddRange(@($btnCheck, $btnFix, $btnRunAgent, $btnMyLog, $btnUndo))
 
 $lstStatus = New-Object System.Windows.Forms.ListView
 $lstStatus.Dock = 'Fill'
@@ -802,24 +812,72 @@ function Update-Filter {
     }
 }
 
-function Get-SelectedAssignment {
-    if ($grid.SelectedRows.Count -ne 1) { return $null }
-    $row = $grid.SelectedRows[0].DataBoundItem.Row
-    foreach ($a in $script:Config.Assignments) {
-        if ($a.Type -eq $row['TypeKey'] -and $a.Name -eq $row['Name'] -and $a.Sid -eq $row['Sid']) { return $a }
+function Get-SelectedAssignments {
+    <# Alle markierten Zuweisungen (in der angezeigten Reihenfolge). #>
+    $rows = @($grid.SelectedRows | Sort-Object -Property Index | ForEach-Object { $_.DataBoundItem.Row })
+    foreach ($row in $rows) {
+        foreach ($a in $script:Config.Assignments) {
+            if ($a.Type -eq $row['TypeKey'] -and $a.Name -eq $row['Name'] -and $a.Sid -eq $row['Sid']) { $a; break }
+        }
     }
-    return $null
+}
+
+function Get-SelectedAssignment {
+    <# Die eine markierte Zuweisung; $null bei keiner oder mehreren. #>
+    if ($grid.SelectedRows.Count -ne 1) { return $null }
+    @(Get-SelectedAssignments) | Select-Object -First 1
+}
+
+function Show-SelectOneAssignment {
+    if ($grid.SelectedRows.Count -gt 1) { Show-WpeMessage (Get-WpeText 'Admin.SelectOneAssignment') 'Warning' }
+    else { Show-WpeMessage (Get-WpeText 'Admin.SelectAssignment') 'Warning' }
+}
+
+function Format-WpeList {
+    <# Mehrzeilige Aufzaehlung fuer Rueckfragen, hoechstens $Max Zeilen plus "... und N weitere". #>
+    param([string[]]$Lines, [int]$Max = 12)
+    $shown = @($Lines | Select-Object -First $Max | ForEach-Object { "  $_" })
+    if ($Lines.Count -gt $Max) { $shown += '  ' + (Get-WpeText 'Admin.AndMore' ($Lines.Count - $Max)) }
+    $shown -join "`n"
+}
+
+function Invoke-UndoLastChange {
+    <# Letzte gespeicherte Aenderung rueckgaengig machen (config.json.bak), mit Rueckfrage. #>
+    try {
+        $backup = Get-WpeConfigBackup -Path $script:ConfigPath
+        $current = Read-WpeConfig -Path $script:ConfigPath
+    } catch {
+        Show-WpeMessage (Get-WpeText 'Admin.UndoFailed' $_.Exception.Message) 'Error'
+        return
+    }
+    if (-not $backup) { Show-WpeMessage (Get-WpeText 'Admin.UndoNone'); return }
+    $culture = [Globalization.CultureInfo]::GetCultureInfo($(if ((Get-WpeLanguage) -eq 'de') { 'de-DE' } else { 'en-US' }))
+    $when = $backup.Saved.ToString('g', $culture)
+    $u = @($current.Assignments | Where-Object { $_.Type -eq 'User' }).Count
+    $g = @($current.Assignments | Where-Object { $_.Type -eq 'Group' }).Count
+    if (-not (Confirm-WpeAction (Get-WpeText 'Admin.UndoConfirm' $when $backup.Users $backup.Groups $backup.Printers $u $g $current.Printers.Count))) { return }
+    try {
+        Restore-WpeConfigBackup -Path $script:ConfigPath -Confirm:$false
+    } catch {
+        Show-WpeMessage (Get-WpeText 'Admin.UndoFailed' $_.Exception.Message) 'Error'
+        return
+    }
+    Update-All
+    $statusLabel.Text = Get-WpeText 'Admin.UndoDone' $when
 }
 
 function Save-Assignment {
     param([hashtable]$Data)
+    $msg = ''
     try {
         Set-WpeAssignment @Data -ConfigPath $script:ConfigPath -Confirm:$false | Out-Null
-        $statusLabel.Text = Get-WpeText 'Admin.Saved' (Get-TypeLabel $Data.Type) $Data.Name $Data.Printer
+        $msg = Get-WpeText 'Admin.Saved' (Get-TypeLabel $Data.Type) $Data.Name $Data.Printer
     } catch {
         Show-WpeMessage (Get-WpeText 'Common.SaveFailed' $_.Exception.Message) 'Error'
     }
     Update-All
+    # Erst nach Update-All - das ueberschreibt die Statuszeile mit "geladen ..."
+    if ($msg) { $statusLabel.Text = $msg }
 }
 
 function Invoke-AddAssignment {
@@ -833,7 +891,7 @@ function Invoke-AddAssignment {
 
 function Invoke-EditAssignment {
     $a = Get-SelectedAssignment
-    if (-not $a) { Show-WpeMessage (Get-WpeText 'Admin.SelectAssignment') 'Warning'; return }
+    if (-not $a) { Show-SelectOneAssignment; return }
     $data = Show-AssignmentDialog -Type $a.Type -Existing $a -Config $script:Config
     if ($data) { Save-Assignment $data }
 }
@@ -917,32 +975,44 @@ $btnForce.Add_Click({
     })
 $txtFilter.Add_TextChanged({ Update-Filter })
 $btnRemove.Add_Click({
-        $a = Get-SelectedAssignment
-        if (-not $a) { Show-WpeMessage (Get-WpeText 'Admin.SelectAssignment') 'Warning'; return }
-        if (-not (Confirm-WpeAction (Get-WpeText 'Admin.RemoveConfirm' (Get-TypeLabel $a.Type) $a.Name $a.Printer))) { return }
+        $sel = @(Get-SelectedAssignments)
+        if (-not $sel) { Show-WpeMessage (Get-WpeText 'Admin.SelectAssignment') 'Warning'; return }
+        if ($sel.Count -eq 1) {
+            $question = Get-WpeText 'Admin.RemoveConfirm' (Get-TypeLabel $sel[0].Type) $sel[0].Name $sel[0].Printer
+        } else {
+            $question = Get-WpeText 'Admin.RemoveManyConfirm' $sel.Count (Format-WpeList @($sel | ForEach-Object { '{0} {1} ({2})' -f (Get-TypeLabel $_.Type), $_.Name, $_.Printer }))
+        }
+        if (-not (Confirm-WpeAction $question)) { return }
+        $msg = ''
         try {
-            Remove-WpeAssignment -Type $a.Type -Name $a.Name -Sid $a.Sid -ConfigPath $script:ConfigPath -Confirm:$false
-            $statusLabel.Text = Get-WpeText 'Admin.Removed' (Get-TypeLabel $a.Type) $a.Name
+            # Ein Lese-/Speichervorgang fuer alle - so macht "Rueckgaengig" auch alle auf einmal rueckgaengig
+            $sel | Select-Object Type, Name, Sid | Remove-WpeAssignment -ConfigPath $script:ConfigPath -Confirm:$false
+            $msg = if ($sel.Count -eq 1) { Get-WpeText 'Admin.Removed' (Get-TypeLabel $sel[0].Type) $sel[0].Name } else { Get-WpeText 'Admin.RemovedMany' $sel.Count }
         } catch {
             Show-WpeMessage (Get-WpeText 'Common.RemoveFailed' $_.Exception.Message) 'Error'
         }
         Update-All
+        if ($msg) { $statusLabel.Text = $msg }
     })
 $grid.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Delete) { $btnRemove.PerformClick() } })
 
 $btnImport.Add_Click({ Invoke-PrinterImport })
 $btnPrnRemove.Add_Click({
-        if ($prnGrid.SelectedRows.Count -ne 1) { Show-WpeMessage (Get-WpeText 'Admin.SelectPrinter') 'Warning'; return }
-        $path = [string]$prnGrid.SelectedRows[0].DataBoundItem.Row['Printer']
-        if (-not (Confirm-WpeAction (Get-WpeText 'Admin.RemovePrinterConfirm' $path))) { return }
+        $paths = @($prnGrid.SelectedRows | Sort-Object -Property Index | ForEach-Object { [string]$_.DataBoundItem.Row['Printer'] })
+        if (-not $paths) { Show-WpeMessage (Get-WpeText 'Admin.SelectPrinter') 'Warning'; return }
+        $question = if ($paths.Count -eq 1) { Get-WpeText 'Admin.RemovePrinterConfirm' $paths[0] } else { Get-WpeText 'Admin.RemovePrintersConfirm' $paths.Count (Format-WpeList $paths) }
+        if (-not (Confirm-WpeAction $question)) { return }
+        $msg = ''
         try {
             $cfg = Read-WpeConfig -Path $script:ConfigPath
-            foreach ($p in @($cfg.Printers | Where-Object { $_.Path -eq $path })) { [void]$cfg.Printers.Remove($p) }
+            foreach ($p in @($cfg.Printers | Where-Object { $paths -contains $_.Path })) { [void]$cfg.Printers.Remove($p) }
             Save-WpeConfig -Config $cfg -Path $script:ConfigPath -Confirm:$false
+            $msg = Get-WpeText 'Admin.PrintersRemoved' $paths.Count
         } catch {
             Show-WpeMessage (Get-WpeText 'Common.RemoveFailed' $_.Exception.Message) 'Error'
         }
         Update-All
+        if ($msg) { $statusLabel.Text = $msg }
     })
 
 $doTest = {
@@ -993,6 +1063,7 @@ $btnUserLog.Add_Click({
     })
 
 $btnCheck.Add_Click({ Update-StatusList })
+$btnUndo.Add_Click({ Invoke-UndoLastChange })
 $btnFix.Add_Click({
         if ($lstStatus.SelectedItems.Count -ne 1) { Show-WpeMessage (Get-WpeText 'Admin.SelectCheck') 'Warning'; return }
         $c = $lstStatus.SelectedItems[0].Tag

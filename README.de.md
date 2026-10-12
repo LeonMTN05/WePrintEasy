@@ -8,7 +8,7 @@
 Gesetzt bei jeder Anmeldung – und auf Wunsch festgehalten während der ganzen Sitzung.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.7-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.8-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-systemvoraussetzungen)
@@ -116,7 +116,7 @@ Alternative zum ZIP: eine einzelne `.exe` mit Eintrag unter **Apps / Programme u
 
 ```powershell
 # Unbeaufsichtigt (Rückgabewert 0 = erfolgreich, 10 = fehlgeschlagen, Protokoll: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.7.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.8.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -285,7 +285,10 @@ Systeminformationen enthalten keine Rechner-, Benutzer-, Domänen- oder Serverna
 - **Gruppe zuweisen…** – dasselbe für eine AD-Gruppe. Über die **Priorität** wird
   festgelegt, welche Gruppe gewinnt, wenn ein Benutzer in mehreren Gruppen ist
   (kleinste Zahl gewinnt). Verschachtelte Gruppen werden berücksichtigt.
-- **Bearbeiten…** (oder Doppelklick), **Entfernen** (oder <kbd>Entf</kbd>), **Filter**.
+- **Bearbeiten…** (oder Doppelklick), **Entfernen** (oder <kbd>Entf</kbd>), **Filter**. Mit <kbd>Strg</kbd>- bzw.
+  <kbd>Umschalt</kbd>-Klick lassen sich mehrere Zuweisungen auf einmal entfernen (ebenso in der Druckerliste).
+- <kbd>Strg</kbd>+<kbd>Z</kbd> oder **Einrichtung → Letzte Änderung rückgängig…** stellt den Stand vor der letzten
+  Speicherung wieder her (Zuweisungen, Druckerliste und Einstellungen; erneut ausgeführt wieder den jetzigen Stand).
 
 **Reihenfolge:** Direkte Benutzerzuweisung → Gruppenzuweisung mit kleinster Priorität → keine Änderung.
 

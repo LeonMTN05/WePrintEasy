@@ -18,7 +18,7 @@ $script:PrinterRegKey    = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\W
 $script:ComputerDomain   = ''   # Zwischenspeicher fuer Get-WpeLdapPrefix
 
 # Version und Projekt - nur hier pflegen
-$script:WpeVersion       = '1.0.7'
+$script:WpeVersion       = '1.0.8'
 $script:WpeAuthor        = 'LeonMTN05'
 $script:WpeAuthorUrl     = 'https://github.com/LeonMTN05'
 $script:WpeProjectUrl    = 'https://github.com/LeonMTN05/WePrintEasy'
@@ -391,6 +391,50 @@ function Save-WpeConfig {
     } finally {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
     }
+}
+
+function Get-WpeConfigBackup {
+    <#
+        Die Sicherung config.json.bak (Stand vor der letzten Speicherung): Zeitpunkt und Umfang.
+        $null, wenn es keine gibt. Ist sie nicht lesbar, wirft Read-WpeConfig einen Fehler.
+    #>
+    [CmdletBinding()]
+    param([string]$Path = (Get-WpeConfigPath))
+    $bak = "$Path.bak"
+    if (-not (Test-Path -LiteralPath $bak -PathType Leaf)) { return $null }
+    $cfg = Read-WpeConfig -Path $bak
+    [pscustomobject]@{
+        Path     = $bak
+        Saved    = (Get-Item -LiteralPath $bak).LastWriteTime
+        Users    = @($cfg.Assignments | Where-Object { $_.Type -eq 'User' }).Count
+        Groups   = @($cfg.Assignments | Where-Object { $_.Type -eq 'Group' }).Count
+        Printers = $cfg.Printers.Count
+    }
+}
+
+function Restore-WpeConfigBackup {
+    <#
+        Macht die letzte Speicherung rueckgaengig: config.json.bak wird wieder zur Konfiguration (Zuweisungen,
+        Druckerliste und Einstellungen), der aktuelle Stand zur neuen Sicherung. Ein zweiter Aufruf stellt ihn
+        also wieder her. Austausch atomar wie beim Speichern; laufende Agenten uebernehmen den Stand automatisch.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Path = (Get-WpeConfigPath))
+    $ErrorActionPreference = 'Stop'
+    $bak = "$Path.bak"
+    if (-not (Test-Path -LiteralPath $bak -PathType Leaf)) { throw (Get-WpeText 'Config.NoBackup' $bak) }
+    # Eine defekte Sicherung nicht einspielen (wirft bei ungueltigem JSON)
+    [void](Read-WpeConfig -Path $bak)
+    if (-not $PSCmdlet.ShouldProcess($Path, (Get-WpeText 'Config.RestoreAction'))) { return }
+    $tmp = "$Path.$([Guid]::NewGuid().ToString('N')).tmp"
+    [IO.File]::Copy($bak, $tmp)
+    try {
+        [IO.File]::Replace($tmp, $Path, $bak)
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    # Die Kopie traegt die alte Zeit - neu stempeln, damit die Agenten die Aenderung sicher bemerken
+    [IO.File]::SetLastWriteTimeUtc($Path, [DateTime]::UtcNow)
 }
 
 function Test-WpeConfigWritable {
@@ -2183,6 +2227,7 @@ Export-ModuleMember -Function @(
     'Get-WpeSupportedLanguage', 'Set-WpeLanguage', 'Get-WpeLanguage', 'Initialize-WpeLanguage', 'Get-WpeText',
     'Get-WpeShortcutPath', 'Rename-WpeShortcut', 'Get-WpeAssignmentSource',
     'Get-WpeDefaultSettings', 'Get-WpeConfigPath', 'Read-WpeConfig', 'Save-WpeConfig', 'Test-WpeConfigWritable',
+    'Get-WpeConfigBackup', 'Restore-WpeConfigBackup',
     'New-WpeAssignmentObject', 'ConvertTo-WpeAccountName',
     'Get-WpeAssignment', 'Set-WpeAssignment', 'Remove-WpeAssignment', 'Resolve-WpeAssignment',
     'Get-WpeCurrentAccount', 'ConvertTo-WpeLdapFilterValue', 'Get-WpeAccountSid', 'Find-WpeAdObject', 'Get-WpeAdUserGroupSids',

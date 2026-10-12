@@ -302,6 +302,29 @@ Group;Lager;\\srv\Lager;20
         else { Remove-ItemProperty -LiteralPath $userKey -Name LastUpdateCheck -ErrorAction SilentlyContinue }
     }
 
+    Write-Host 'Letzte Aenderung rueckgaengig (config.json.bak)'
+    $undoCfg = Join-Path $tmp 'undo\config.json'
+    Assert 'Ohne Sicherung: Get-WpeConfigBackup liefert nichts' { $null -eq (Get-WpeConfigBackup -Path $undoCfg) }
+    Assert 'Ohne Sicherung: Restore-WpeConfigBackup meldet einen Fehler' { try { Restore-WpeConfigBackup -Path $undoCfg -Confirm:$false; $false } catch { $_.Exception.Message -like '*.bak*' } }
+    Set-WpeAssignment -Type User -Name 'a1' -Sid 'S-1-5-21-9-9-9-1' -Printer 'P1' -ConfigPath $undoCfg -SkipSidLookup | Out-Null
+    Set-WpeAssignment -Type User -Name 'a2' -Sid 'S-1-5-21-9-9-9-2' -Printer 'P2' -ConfigPath $undoCfg -SkipSidLookup | Out-Null
+    @([pscustomobject]@{ Type = 'User'; Name = 'a1'; Sid = 'S-1-5-21-9-9-9-1' }, [pscustomobject]@{ Type = 'User'; Name = 'a2'; Sid = 'S-1-5-21-9-9-9-2' }) |
+        Remove-WpeAssignment -ConfigPath $undoCfg -Confirm:$false
+    Assert 'Mehrere Zuweisungen in einem Vorgang entfernt' { (Read-WpeConfig -Path $undoCfg).Assignments.Count -eq 0 }
+    $bk = Get-WpeConfigBackup -Path $undoCfg
+    Assert 'Sicherung: Stand vor dem Entfernen (2 Benutzer), mit Zeitpunkt' { $bk.Users -eq 2 -and $bk.Groups -eq 0 -and $bk.Saved -is [datetime] }
+    $before = (Get-Item -LiteralPath $undoCfg).LastWriteTimeUtc
+    Start-Sleep -Milliseconds 50
+    Restore-WpeConfigBackup -Path $undoCfg -Confirm:$false
+    Assert 'Rueckgaengig: beide Zuweisungen wieder da' { (Read-WpeConfig -Path $undoCfg).Assignments.Count -eq 2 }
+    Assert 'Rueckgaengig: Datei neu gestempelt (Agenten bemerken die Aenderung)' { (Get-Item -LiteralPath $undoCfg).LastWriteTimeUtc -gt $before }
+    Assert 'Rueckgaengig: der vorherige Stand ist jetzt die Sicherung' { (Get-WpeConfigBackup -Path $undoCfg).Users -eq 0 }
+    Restore-WpeConfigBackup -Path $undoCfg -Confirm:$false
+    Assert 'Erneut rueckgaengig: Stand nach dem Entfernen wieder hergestellt' { (Read-WpeConfig -Path $undoCfg).Assignments.Count -eq 0 }
+    Assert 'Keine temporaeren Dateien uebrig' { @(Get-ChildItem -LiteralPath (Split-Path $undoCfg) -Filter '*.tmp').Count -eq 0 }
+    [IO.File]::WriteAllText("$undoCfg.bak", '{ kaputt')
+    Assert 'Defekte Sicherung wird nicht eingespielt' { try { Restore-WpeConfigBackup -Path $undoCfg -Confirm:$false; $false } catch { (Read-WpeConfig -Path $undoCfg).Assignments.Count -eq 0 } }
+
     Write-Host 'Versionsuebersicht der Server (Farm)'
     $farmCfg = Join-Path $tmp 'farm\config.json'
     Assert 'Ohne Eintraege: keine Server' { @(Get-WpeHost -ConfigPath $farmCfg).Count -eq 0 }

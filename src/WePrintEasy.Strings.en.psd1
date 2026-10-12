@@ -29,6 +29,8 @@
     # --- Module: configuration, assignments, printers ------------------------
     'Config.InvalidJson'             = 'The configuration file ''{0}'' is not valid JSON: {1}'
     'Config.SaveAction'              = 'Save configuration'
+    'Config.NoBackup'                = 'There is no backup ({0}) - nothing has been changed yet.'
+    'Config.RestoreAction'           = 'Undo last change'
     'Config.InvalidSetting'          = 'Setting ''{0}'' has the invalid value ''{1}'' - using the default {2}.'
     'Config.InvalidPriority'         = 'Assignment ''{0}'' has the invalid priority ''{1}'' - using 100.'
     'Assign.AccountNotFound'         = 'Account ''{0}'' was not found in AD - skipped.'
@@ -293,6 +295,7 @@
         '- For whole departments: "Assign group..." with an AD group. A user assignment always takes precedence; if someone is in several groups, the lowest priority number wins.'
         '- To check: tab "Check user" > "Resolve" shows which printer will be set at the next logon.'
         '- New printers on the file server? Tab "Printer list" > "Update from print/file server...".'
+        '- Deleted or changed something by mistake? Ctrl+Z (or tab "Setup check" > "Undo last change...") restores the state before the last save.'
         '> Changes take effect immediately: employees who are already logged on get the new printer within about 30 seconds - without logging on again.'
         ''
     )
@@ -370,12 +373,19 @@
     'Admin.Fix'                      = 'Fix selected item'
     'Admin.RunAgent'                 = 'Run agent for me now'
     'Admin.MyLog'                    = 'My log'
+    'Admin.Undo'                     = 'Undo last change...'
+    'Admin.UndoConfirm'              = "Undo the last saved change?`n`nThe state before the last save ({0}) is restored:`n{1} user and {2} group assignments, {3} printers in the list.`nCurrently: {4} user and {5} group assignments, {6} printers.`n`nThis covers assignments, the printer list and settings. Undoing again brings back the current state."
+    'Admin.UndoNone'                 = 'There is no earlier version to restore.'
+    'Admin.UndoDone'                 = 'Last change undone (state of {0}). Ctrl+Z brings back the previous state.'
+    'Admin.UndoFailed'               = 'Undo failed: {0}'
     'Admin.SetupHint'                = 'All items should be "OK". Select yellow/red items and click "Fix selected item" (where possible) or follow the instructions in the "Guide" tab. With several terminal servers, run the check on each server.'
     'Admin.SystemCheck'              = 'System check'
     'Admin.StatusLoaded'             = '{0} user and {1} group assignment(s), {2} printers in the list - loaded {3}'
     'Admin.Saved'                    = 'Saved: {0} {1} -> {2}'
     'Admin.ReplaceConfirm'           = "'{2}' is already assigned to {0} '{1}'.`n`nReplace with '{3}'?"
     'Admin.SelectAssignment'         = 'Please select an assignment first.'
+    'Admin.SelectOneAssignment'      = 'Please select exactly one assignment.'
+    'Admin.AndMore'                  = '... and {0} more'
     'Admin.DriversPartial'           = "{0} of {1} drivers installed. Errors:`n{2}"
     'Admin.PrintersUpdated'          = 'Printer list updated: {0} printers from {1}.'
     'Admin.PrintersSaveFailed'       = "The printer list could not be saved:`n{0}"
@@ -384,9 +394,13 @@
     'Admin.NoLog'                    = "{0}`r`n`r`nNo log found ({1}).`r`nThe user has not logged on to this server since the installation (or the profile is on a user profile disk that is only mounted during the session)."
     'Admin.LogHeader'                = "{0}  (newest entries at the top)`r`n{1}"
     'Admin.RemoveConfirm'            = 'Really remove the assignment for {0} ''{1}'' ({2})?'
-    'Admin.Removed'                  = 'Removed: {0} {1}'
+    'Admin.Removed'                  = 'Removed: {0} {1} - Ctrl+Z undoes this.'
+    'Admin.RemoveManyConfirm'        = "Really remove these {0} assignments?`n`n{1}"
+    'Admin.RemovedMany'              = '{0} assignments removed - Ctrl+Z undoes this.'
     'Admin.SelectPrinter'            = 'Please select a printer first.'
     'Admin.RemovePrinterConfirm'     = "Remove '{0}' from the printer list?`n`nExisting assignments remain unchanged."
+    'Admin.RemovePrintersConfirm'    = "Remove these {0} printers from the printer list?`n`n{1}`n`nExisting assignments remain unchanged."
+    'Admin.PrintersRemoved'          = 'Removed from the printer list: {0} - Ctrl+Z undoes this.'
     'Admin.ResultUser'               = 'User        : {0} ({1})'
     'Admin.ResultSid'                = 'SID         : {0}'
     'Admin.ResultGroups'             = 'Groups      : {0} security group(s) (including nested)'

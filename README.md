@@ -8,7 +8,7 @@
 Set at every logon – and, if you like, kept in place for the entire session.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.7-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.8-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-requirements)
@@ -116,7 +116,7 @@ Alternative to the ZIP: a single `.exe` with an entry under **Apps / Programs an
 
 ```powershell
 # Unattended (exit code 0 = success, 10 = failed, log: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.7.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.8.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -283,7 +283,10 @@ contains no computer, user, domain or server names.
   select, choose a printer, save.
 - **Assign group…** – the same for an AD group. The **priority** decides which group wins
   if a user is in several groups (lowest number wins). Nested groups are taken into account.
-- **Edit…** (or double-click), **Remove** (or <kbd>Del</kbd>), **Search** filter.
+- **Edit…** (or double-click), **Remove** (or <kbd>Del</kbd>), **Search** filter. <kbd>Ctrl</kbd>- or
+  <kbd>Shift</kbd>-click selects several assignments to remove at once (the printer list works the same way).
+- <kbd>Ctrl</kbd>+<kbd>Z</kbd> or **Setup check → Undo last change…** restores the state before the last save
+  (assignments, printer list and settings; running it again brings back the current state).
 
 **Order:** direct user assignment → group assignment with the lowest priority → no change.
 

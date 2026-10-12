@@ -30,6 +30,8 @@
     # --- Modul: Konfiguration, Zuweisungen, Drucker ------------------------------
     'Config.InvalidJson'             = 'Die Konfigurationsdatei ''{0}'' ist kein gültiges JSON: {1}'
     'Config.SaveAction'              = 'Konfiguration speichern'
+    'Config.NoBackup'                = 'Keine Sicherung vorhanden ({0}) - es wurde noch nichts geändert.'
+    'Config.RestoreAction'           = 'Letzte Änderung rückgängig machen'
     'Config.InvalidSetting'          = 'Einstellung ''{0}'' hat den ungültigen Wert ''{1}'' - verwendet wird der Standard {2}.'
     'Config.InvalidPriority'         = 'Zuweisung ''{0}'' hat die ungültige Priorität ''{1}'' - verwendet wird 100.'
     'Assign.AccountNotFound'         = 'Konto ''{0}'' wurde im AD nicht gefunden - übersprungen.'
@@ -294,6 +296,7 @@
         '- Für ganze Abteilungen: "Gruppe zuweisen..." mit einer AD-Gruppe. Eine Benutzerzuweisung geht immer vor; ist jemand in mehreren Gruppen, gewinnt die kleinste Prioritätszahl.'
         '- Kontrolle: Reiter "Benutzer prüfen" > "Ermitteln" zeigt, welcher Drucker bei der nächsten Anmeldung gesetzt wird.'
         '- Neue Drucker auf dem Fileserver? Reiter "Druckerliste" > "Vom Druck-/Fileserver aktualisieren...".'
+        '- Versehentlich etwas gelöscht oder geändert? Strg+Z (oder Reiter "Einrichtung" > "Letzte Änderung rückgängig...") stellt den Stand vor der letzten Speicherung wieder her.'
         '> Änderungen gelten sofort: Bereits angemeldete Mitarbeiter erhalten den neuen Drucker innerhalb von ca. 30 Sekunden - ohne Neuanmeldung.'
         ''
     )
@@ -371,12 +374,19 @@
     'Admin.Fix'                      = 'Ausgewählten Punkt beheben'
     'Admin.RunAgent'                 = 'Agent jetzt für mich ausführen'
     'Admin.MyLog'                    = 'Mein Protokoll'
+    'Admin.Undo'                     = 'Letzte Änderung rückgängig...'
+    'Admin.UndoConfirm'              = "Letzte gespeicherte Änderung rückgängig machen?`n`nWiederhergestellt wird der Stand vor der letzten Speicherung ({0}):`n{1} Benutzer- und {2} Gruppenzuweisungen, {3} Drucker in der Liste.`nDerzeit: {4} Benutzer- und {5} Gruppenzuweisungen, {6} Drucker.`n`nBetrifft Zuweisungen, Druckerliste und Einstellungen. Ein erneutes Rückgängig stellt den jetzigen Stand wieder her."
+    'Admin.UndoNone'                 = 'Es gibt keine frühere Version zum Wiederherstellen.'
+    'Admin.UndoDone'                 = 'Letzte Änderung rückgängig gemacht (Stand vom {0}). Strg+Z stellt den vorherigen Stand wieder her.'
+    'Admin.UndoFailed'               = 'Rückgängig fehlgeschlagen: {0}'
     'Admin.SetupHint'                = 'Alle Punkte sollten "OK" sein. Gelbe/rote Punkte auswählen und "Ausgewählten Punkt beheben" klicken (wo möglich) oder die Hinweise im Reiter "Anleitung" befolgen. Bei mehreren Terminalservern die Prüfung auf jedem Server durchführen.'
     'Admin.SystemCheck'              = 'Systemprüfung'
     'Admin.StatusLoaded'             = '{0} Benutzer- und {1} Gruppenzuweisung(en), {2} Drucker in der Liste - geladen {3}'
     'Admin.Saved'                    = 'Gespeichert: {0} {1} -> {2}'
     'Admin.ReplaceConfirm'           = "Für {0} '{1}' ist bereits '{2}' hinterlegt.`n`nDurch '{3}' ersetzen?"
     'Admin.SelectAssignment'         = 'Bitte zuerst eine Zuweisung auswählen.'
+    'Admin.SelectOneAssignment'      = 'Bitte genau eine Zuweisung auswählen.'
+    'Admin.AndMore'                  = '... und {0} weitere'
     'Admin.DriversPartial'           = "{0} von {1} Treibern installiert. Fehler:`n{2}"
     'Admin.PrintersUpdated'          = 'Druckerliste aktualisiert: {0} Drucker von {1}.'
     'Admin.PrintersSaveFailed'       = "Druckerliste konnte nicht gespeichert werden:`n{0}"
@@ -385,9 +395,13 @@
     'Admin.NoLog'                    = "{0}`r`n`r`nKein Protokoll gefunden ({1}).`r`nDer Benutzer hat sich seit der Installation noch nicht an diesem Server angemeldet (oder das Profil liegt auf einem Benutzerprofil-Datenträger, der nur während der Sitzung eingebunden ist)."
     'Admin.LogHeader'                = "{0}  (neueste Einträge oben)`r`n{1}"
     'Admin.RemoveConfirm'            = 'Zuweisung für {0} ''{1}'' ({2}) wirklich entfernen?'
-    'Admin.Removed'                  = 'Entfernt: {0} {1}'
+    'Admin.Removed'                  = 'Entfernt: {0} {1} - Strg+Z macht das rückgängig.'
+    'Admin.RemoveManyConfirm'        = "Diese {0} Zuweisungen wirklich entfernen?`n`n{1}"
+    'Admin.RemovedMany'              = '{0} Zuweisungen entfernt - Strg+Z macht das rückgängig.'
     'Admin.SelectPrinter'            = 'Bitte zuerst einen Drucker auswählen.'
     'Admin.RemovePrinterConfirm'     = "'{0}' aus der Druckerliste entfernen?`n`nBestehende Zuweisungen bleiben unverändert."
+    'Admin.RemovePrintersConfirm'    = "Diese {0} Drucker aus der Druckerliste entfernen?`n`n{1}`n`nBestehende Zuweisungen bleiben unverändert."
+    'Admin.PrintersRemoved'          = 'Aus der Druckerliste entfernt: {0} - Strg+Z macht das rückgängig.'
     'Admin.ResultUser'               = 'Benutzer      : {0} ({1})'
     'Admin.ResultSid'                = 'SID           : {0}'
     'Admin.ResultGroups'             = 'Gruppen       : {0} Sicherheitsgruppe(n) (inkl. verschachtelter)'

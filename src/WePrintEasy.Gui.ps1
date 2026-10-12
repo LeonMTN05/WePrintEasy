@@ -158,10 +158,34 @@ function Save-WpeScreenshot {
     $Window.Refresh()
     for ($i = 0; $i -lt 5; $i++) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 80 }
     $b = $Window.Bounds
-    $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
+    # 24 bit: GDI-Zeichnen setzt keinen Alphakanal - ein 32-bit-Bild waere sonst durchsichtig
+    $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     try {
-        $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+        # Das Fenster selbst zeichnen lassen (PW_RENDERFULLCONTENT): erfasst auch Teile ausserhalb des
+        # Bildschirms - der Testrechner in GitHub Actions hat nur 1024 Pixel Breite, das Fenster 1120
+        if (-not ('WePrintEasy.WindowCapture' -as [type])) {
+            Add-Type -Namespace WePrintEasy -Name WindowCapture -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+[DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out RECT rect, int size);
+[StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+'@
+        }
+        $hdc = $g.GetHdc()
+        try { $ok = [WePrintEasy.WindowCapture]::PrintWindow($Window.Handle, $hdc, 2) } finally { $g.ReleaseHdc($hdc) }
+        if ($ok) {
+            # Den unsichtbaren Rand (Windows 10/11: 7 px) malt PrintWindow schwarz - weiss uebermalen.
+            # Die Bildgroesse bleibt (= Form.Bounds), website\scripts\screenshots.mjs schneidet den Rand ab.
+            $r = New-Object WePrintEasy.WindowCapture+RECT
+            if ([WePrintEasy.WindowCapture]::DwmGetWindowAttribute($Window.Handle, 9, [ref]$r, 16) -eq 0) {
+                $region = New-Object System.Drawing.Region(New-Object System.Drawing.Rectangle(0, 0, $b.Width, $b.Height))
+                $region.Exclude((New-Object System.Drawing.Rectangle(($r.Left - $b.Left), ($r.Top - $b.Top), ($r.Right - $r.Left), ($r.Bottom - $r.Top))))
+                $g.FillRegion([System.Drawing.Brushes]::White, $region)
+                $region.Dispose()
+            }
+        } else {
+            $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+        }
     } catch {
         $Window.DrawToBitmap($bmp, (New-Object System.Drawing.Rectangle(0, 0, $b.Width, $b.Height)))
     } finally {
