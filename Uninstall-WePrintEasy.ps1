@@ -50,11 +50,16 @@ foreach ($task in @(Get-ScheduledTask -TaskPath '\WePrintEasy\' -ErrorAction Sil
 # Laufende Agenten beenden - sonst setzen sie den Drucker bis zur Abmeldung weiter zurueck
 $agents = @()
 try { $agents = @(Get-WpeAgentProcess) } catch { Write-Warning (Get-WpeText 'Install.AgentsUnknown' $_.Exception.Message) }
+$stopped = @()
 foreach ($a in $agents) {
     if ($PSCmdlet.ShouldProcess((Get-WpeText 'Agent.ProcessLabel' $a.User $a.SessionId), (Get-WpeText 'Uninstall.Stop'))) {
         Stop-Process -Id $a.ProcessId -Force -ErrorAction SilentlyContinue
+        $stopped += $a.ProcessId
     }
 }
+# Stop-Process wartet nicht: Ein gerade startender Agent haelt WePrintEasy-Agent.ps1 sonst noch
+# offen, und das Loeschen des Programmordners scheitert
+if ($stopped) { Wait-Process -Id $stopped -Timeout 15 -ErrorAction SilentlyContinue }
 
 # Eintrag dieses Servers in der Versionsuebersicht (bei zentraler Konfiguration fuer die anderen Server)
 try { Unregister-WpeHost -ConfigPath $configPath -Confirm:$false } catch { Write-Warning (Get-WpeText 'Uninstall.HostKept' $_.Exception.Message) }
