@@ -101,6 +101,8 @@ jobs:
           $out = winget validate --manifest $env:MANIFEST_DIR --disable-interactivity | Out-String
           Write-Host $out
           if ($out -notmatch 'Manifest validation succeeded') { throw 'winget validate: Manifeste ungueltig.' }
+          # Auch "succeeded with warnings" endet mit einem Code ungleich 0
+          exit 0
 
       # Wie winget: gleiche Parameter (InstallerType inno, --silent), danach Apps und Features wie im Manifest.
       # Nicht ueber "winget install": winget markiert die Datei als "aus dem Internet", und vor dem unsignierten
