@@ -89,6 +89,11 @@ jobs:
         shell: powershell
         run: .\tools\Build-Installer.ps1
 
+      # Wie winget es ausfuehrt, aus PowerShell 7 gestartet - vor dem Veroeffentlichen
+      - name: Setup testen (unbeaufsichtigt installieren und deinstallieren)
+        shell: pwsh
+        run: ./tests/Test-Setup.ps1 -InstallerPath "dist/WePrintEasy-Setup-$env:VERSION.exe"
+
       - name: ZIP bauen
         shell: pwsh
         run: |
