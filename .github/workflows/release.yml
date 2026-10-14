@@ -1,0 +1,166 @@
+name: Release
+
+# Baut aus einem Versions-Tag (v1.2.3) das ZIP und den Installer WePrintEasy-Setup-<Version>.exe,
+# erzeugt einen signierten Herkunftsnachweis (GitHub Artifact Attestation, Sigstore) und
+# veroeffentlicht alles als GitHub-Release. Pruefen einer heruntergeladenen Datei:
+#   gh attestation verify WePrintEasy-Setup-1.2.3.exe --repo LeonMTN05/WePrintEasy
+# Die Website uebernimmt die Dateien danach mit: npm run package -- --from-release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Vorhandener Versions-Tag, z. B. v1.0.10'
+        required: true
+      dry_run:
+        description: 'Nur bauen (Artefakt am Lauf), kein Herkunftsnachweis, kein Release'
+        type: boolean
+        default: false
+
+permissions: read-all
+
+jobs:
+  release:
+    name: Release
+    # Nur im oeffentlichen Repository
+    if: github.repository == 'LeonMTN05/WePrintEasy'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      # Release anlegen und Dateien hochladen
+      contents: write
+      # Sigstore-Zertifikat und Ablage des Herkunftsnachweises
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - name: Version pruefen
+        shell: pwsh
+        run: |
+          if ($env:TAG -notmatch '^v(\d+\.\d+\.\d+)$') { throw "'$env:TAG' ist kein Versions-Tag (v1.2.3)." }
+          $version = $Matches[1]
+          $psm1 = Get-Content -Raw -LiteralPath src/WePrintEasy.psm1
+          if ($psm1 -notmatch "\`$script:WpeVersion\s*=\s*'([^']+)'") { throw '$script:WpeVersion in src/WePrintEasy.psm1 nicht gefunden.' }
+          if ($Matches[1] -ne $version) { throw "Tag $env:TAG, aber src/WePrintEasy.psm1 sagt $($Matches[1])." }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Unit-Tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\tests\Run-Tests.ps1
+
+      - name: Inno Setup 6
+        shell: pwsh
+        run: |
+          if (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") { Write-Host 'Inno Setup 6 ist vorhanden.'; exit 0 }
+          choco install innosetup --version 6.7.1 --require-checksums -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "choco install innosetup: Code $LASTEXITCODE" }
+
+      - name: Installer bauen
+        shell: powershell
+        run: .\tools\Build-Installer.ps1
+
+      - name: ZIP bauen
+        shell: pwsh
+        run: |
+          # Wie website/scripts/package.mjs: Ordner WePrintEasy-<Version>/, Dateien Byte fuer Byte (CRLF)
+          $root = (Get-Location).Path
+          $folder = "WePrintEasy-$env:VERSION"
+          $zipPath = Join-Path $root "dist/$folder.zip"
+          $include = 'Setup.cmd', 'Setup-WePrintEasy.ps1', 'Update.cmd', 'Update-WePrintEasy.ps1', 'Install-WePrintEasy.ps1',
+            'Uninstall-WePrintEasy.ps1', 'README.md', 'README.de.md', 'LICENSE', 'src', 'examples'
+          $skip = '__MACOSX', '.DS_Store', 'Thumbs.db', 'desktop.ini'
+          $files = foreach ($entry in $include) {
+            $item = Get-Item -LiteralPath $entry
+            if ($item.PSIsContainer) { Get-ChildItem -LiteralPath $item.FullName -Recurse -File | Where-Object { $_.Name -notin $skip } } else { $item }
+          }
+          # Zeitstempel aus dem Commit - gleiche Eingabe, gleiche Eintraege
+          $time = [DateTimeOffset]::Parse((git log -1 --format=%cI))
+          Add-Type -AssemblyName System.IO.Compression.ZipFile
+          $zip = [IO.Compression.ZipFile]::Open($zipPath, 'Create')
+          try {
+            foreach ($f in $files | Sort-Object FullName) {
+              $rel = [IO.Path]::GetRelativePath($root, $f.FullName).Replace('\', '/')
+              $e = $zip.CreateEntry("$folder/$rel", 'Optimal')
+              $e.LastWriteTime = $time
+              $out = $e.Open()
+              try { $bytes = [IO.File]::ReadAllBytes($f.FullName); $out.Write($bytes, 0, $bytes.Length) } finally { $out.Dispose() }
+            }
+          } finally { $zip.Dispose() }
+          Write-Host "$folder.zip: $(@($files).Count) Dateien"
+
+      - name: Pruefsummen
+        shell: pwsh
+        run: |
+          $names = "WePrintEasy-$env:VERSION.zip", "WePrintEasy-Setup-$env:VERSION.exe"
+          $lines = foreach ($n in $names) { '{0}  {1}' -f (Get-FileHash -LiteralPath "dist/$n" -Algorithm SHA256).Hash.ToLowerInvariant(), $n }
+          [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS.txt", ($lines -join "`n") + "`n")
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: weprinteasy-${{ env.VERSION }}
+          path: |
+            dist/WePrintEasy-${{ env.VERSION }}.zip
+            dist/WePrintEasy-Setup-${{ env.VERSION }}.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Herkunftsnachweis
+        id: attest
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/WePrintEasy-${{ env.VERSION }}.zip
+            dist/WePrintEasy-Setup-${{ env.VERSION }}.exe
+
+      - name: GitHub-Release
+        if: env.DRY_RUN != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          $v = $env:VERSION
+          # Sigstore-Bundle mit dem signierten Herkunftsnachweis beider Dateien
+          Copy-Item -LiteralPath $env:BUNDLE -Destination "dist/WePrintEasy-$v.sigstore.json"
+          $assets = "dist/WePrintEasy-Setup-$v.exe", "dist/WePrintEasy-$v.zip", 'dist/SHA256SUMS.txt', "dist/WePrintEasy-$v.sigstore.json"
+          $sums = (Get-Content dist/SHA256SUMS.txt | ForEach-Object { $h, $n = $_ -split '\s+'; "| ``$n`` | ``$h`` |" }) -join "`n"
+          $notes = @"
+          **Download:** ``WePrintEasy-Setup-$v.exe`` (installer / Installer) or / oder ``WePrintEasy-$v.zip``
+
+          Changes / Änderungen: https://weprinteasy.com/changelog/ · https://weprinteasy.de/aenderungen/
+
+          Built by GitHub Actions from tag ``$env:TAG`` ([workflow run]($env:RUN_URL)) with a signed build provenance attestation (Sigstore).
+          Verify a downloaded file / Herkunft einer Datei prüfen:
+
+          ``````
+          gh attestation verify WePrintEasy-Setup-$v.exe --repo $env:GITHUB_REPOSITORY
+          ``````
+
+          | File | SHA-256 |
+          |---|---|
+          $sums
+          "@
+          [IO.File]::WriteAllText("$PWD/dist/notes.md", $notes)
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG @assets --clobber
+            if ($LASTEXITCODE -eq 0) { gh release edit $env:TAG --notes-file dist/notes.md }
+          } else {
+            gh release create $env:TAG @assets --verify-tag --title "WePrintEasy $v" --notes-file dist/notes.md
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release: Code $LASTEXITCODE" }
