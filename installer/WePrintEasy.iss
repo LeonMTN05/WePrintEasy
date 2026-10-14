@@ -247,6 +247,46 @@ begin
   Result := (Outcome = 'Failed') and FileExists(LogFile);
 end;
 
+{ Aus PowerShell 7 gestartet (auch per winget), erben die Windows-PowerShell-Prozesse dessen PSModulePath
+  und laden dann Module von PowerShell 7 - z. B. Microsoft.PowerShell.Security fuer Get-Acl -, die unter 5.1
+  nicht laufen. Daher die Eintraege von PowerShell 7 (...\PowerShell\...) fuer dieses Setup und alle von ihm
+  gestarteten Prozesse entfernen; die von Windows PowerShell (...\WindowsPowerShell\...) bleiben. }
+function SetEnvironmentVariable(lpName, lpValue: String): Boolean;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+procedure CleanPSModulePath;
+var
+  Rest, Entry, Clean, SysModules: String;
+  P: Integer;
+begin
+  Rest := GetEnv('PSModulePath');
+  if Rest = '' then Exit;
+  Clean := '';
+  while Rest <> '' do begin
+    P := Pos(';', Rest);
+    if P = 0 then begin
+      Entry := Rest;
+      Rest := '';
+    end else begin
+      Entry := Copy(Rest, 1, P - 1);
+      Delete(Rest, 1, P);
+    end;
+    if (Trim(Entry) <> '') and (Pos('\powershell\', Lowercase(AddBackslash(Trim(Entry)))) = 0) then begin
+      if Clean <> '' then Clean := Clean + ';';
+      Clean := Clean + Entry;
+    end;
+  end;
+  SysModules := ExpandConstant('{sys}\WindowsPowerShell\v1.0\Modules');
+  if Pos(Lowercase(SysModules), Lowercase(Clean)) = 0 then begin
+    if Clean <> '' then Clean := Clean + ';';
+    Clean := Clean + SysModules;
+  end;
+  if Clean <> GetEnv('PSModulePath') then begin
+    Log('PSModulePath without PowerShell 7 entries: ' + Clean);
+    if not SetEnvironmentVariable('PSModulePath', Clean) then Log('PSModulePath could not be set');
+  end;
+end;
+
 function PowerShellExe: String;
 begin
   Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
@@ -418,6 +458,7 @@ end;
 function InitializeSetup: Boolean;
 begin
   Result := True;
+  CleanPSModulePath;
   InstalledBefore := IsProductInstalled;
   if not InstalledBefore then Exit;
   InstalledVersion := ReadInstalledVersion;
@@ -479,6 +520,12 @@ begin
 end;
 
 { --- Deinstallation --- }
+function InitializeUninstall: Boolean;
+begin
+  CleanPSModulePath;
+  Result := True;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Params, UninstallLog: String;
