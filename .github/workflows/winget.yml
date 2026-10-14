@@ -33,7 +33,8 @@ on:
         type: boolean
         default: true
 
-permissions: read-all
+# Rechte nur am Job - als aufgerufener Workflow darf er nicht mehr verlangen, als release.yml weitergibt
+permissions: {}
 
 jobs:
   winget:
