@@ -445,9 +445,9 @@ Group;Lager;\\srv\Lager;20
     $wingetFiles = @(Get-ChildItem -LiteralPath $wingetDir -Filter '*.yaml')
     $wingetText = @{}
     foreach ($f in $wingetFiles) { $wingetText[$f.Name] = [IO.File]::ReadAllText($f.FullName) }
-    $wingetInstaller = $wingetText['LeonEliasMartin.WePrintEasy.installer.yaml']
+    $wingetInstaller = $wingetText['WePrintEasy.WePrintEasy.installer.yaml']
     $iss = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\installer\WePrintEasy.iss'))
-    Assert 'Ordner wie in winget-pkgs, 4 Manifeste' { $wingetDir -replace '\\', '/' -like '*/winget/manifests/l/LeonEliasMartin/WePrintEasy/9.9.9' -and $wingetFiles.Count -eq 4 }
+    Assert 'Ordner wie in winget-pkgs, 4 Manifeste' { $wingetDir -replace '\\', '/' -like '*/winget/manifests/w/WePrintEasy/WePrintEasy/9.9.9' -and $wingetFiles.Count -eq 4 }
     Assert 'Installer-URL, Pruefsumme und Datum eingesetzt' {
         $wingetInstaller -match '(?m)^  InstallerUrl: https://github\.com/LeonMTN05/WePrintEasy/releases/download/v9\.9\.9/WePrintEasy-Setup-9\.9\.9\.exe$' -and
         $wingetInstaller -match "(?m)^  InstallerSha256: $('AB' * 32)$" -and $wingetInstaller -match '(?m)^ReleaseDate: 2026-01-02$'

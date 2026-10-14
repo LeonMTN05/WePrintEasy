@@ -132,18 +132,18 @@ A new setup replaces the existing version (same app ID, same program folder) and
 
 ### 📦 winget
 
-The Windows installer is also available in the Windows Package Manager as `LeonEliasMartin.WePrintEasy`:
+The Windows installer is also available in the Windows Package Manager as `WePrintEasy.WePrintEasy` (short: `weprinteasy`):
 
 ```powershell
-winget install LeonEliasMartin.WePrintEasy                # unattended, local configuration – then assign printers in printer management
-winget install LeonEliasMartin.WePrintEasy --interactive  # with the setup wizard (configuration storage, printers, options)
-winget upgrade LeonEliasMartin.WePrintEasy                # update, all settings are kept
+winget install weprinteasy                # unattended, local configuration – then assign printers in printer management
+winget install weprinteasy --interactive  # with the setup wizard (configuration storage, printers, options)
+winget upgrade weprinteasy                # update, all settings are kept
 
 # Unattended with parameters of Install-WePrintEasy.ps1 (--% passes the rest unchanged, also in Windows PowerShell 5.1)
-winget install LeonEliasMartin.WePrintEasy --silent --% --custom "/LANG=en /INSTALLARGS=\"-PrintServer fs01 -DisableClientDefaultPrinter\""
+winget install weprinteasy --silent --% --custom "/LANG=en /INSTALLARGS=\"-PrintServer fs01 -DisableClientDefaultPrinter\""
 ```
 
-Uninstall with `winget uninstall LeonEliasMartin.WePrintEasy` (the configuration is kept). New versions are submitted to
+Uninstall with `winget uninstall weprinteasy` (the configuration is kept). New versions are submitted to
 winget automatically after each release (`.github/workflows/winget.yml`).
 
 ### 🔔 Update check

@@ -6,14 +6,14 @@
 .DESCRIPTION
     - setzt Version, SHA-256 des Installers und Veroeffentlichungsdatum in die Vorlagen ein
     - entfernt die Kommentare der Vorlagen (bis auf die Schema-Angabe)
-    - schreibt die Dateien nach <OutputDir>\manifests\l\LeonEliasMartin\WePrintEasy\<Version>\
+    - schreibt die Dateien nach <OutputDir>\manifests\w\WePrintEasy\WePrintEasy\<Version>\
       (gleicher Aufbau wie in winget-pkgs) und gibt diesen Ordner zurueck
 
     Der Installer liegt am GitHub-Release v<Version> (.github/workflows/release.yml); eingereicht
     werden die Manifeste von .github/workflows/winget.yml. Von Hand pruefen und einreichen:
         winget validate --manifest <Ordner>
         winget install --manifest <Ordner>      (vorher: winget settings --enable LocalManifestFiles)
-        wingetcreate submit --prtitle "New package: LeonEliasMartin.WePrintEasy version <Version>" <Ordner>
+        wingetcreate submit --prtitle "New package: WePrintEasy.WePrintEasy version <Version>" <Ordner>
 
     Aufruf:  powershell -File .\tools\New-WingetManifest.ps1 -Version 1.0.11 -InstallerPath .\dist\WePrintEasy-Setup-1.0.11.exe
 
@@ -42,7 +42,7 @@ $ErrorActionPreference = 'Stop'
 # $PSScriptRoot ist in Parameter-Vorgaben von Windows PowerShell 5.1 noch leer
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $OutputDir) { $OutputDir = Join-Path $root 'dist\winget' }
-$packageId = 'LeonEliasMartin.WePrintEasy'
+$packageId = 'WePrintEasy.WePrintEasy'
 $templates = Join-Path $root 'installer\winget'
 
 if (-not $Version) {

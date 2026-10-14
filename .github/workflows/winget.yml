@@ -48,7 +48,7 @@ jobs:
     env:
       TAG: ${{ inputs.tag }}
       SUBMIT: ${{ inputs.submit && 'true' || 'false' }}
-      PACKAGE_ID: LeonEliasMartin.WePrintEasy
+      PACKAGE_ID: WePrintEasy.WePrintEasy
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -124,7 +124,7 @@ jobs:
             Write-Host "::warning::Secret WINGET_TOKEN fehlt - nicht eingereicht. Manifeste: Artefakt winget-$env:VERSION."
             exit 0
           }
-          $folder = 'manifests/l/LeonEliasMartin/WePrintEasy'
+          $folder = 'manifests/w/WePrintEasy/WePrintEasy'
           gh api "repos/microsoft/winget-pkgs/contents/$folder/$env:VERSION" --silent 2> $null
           if ($LASTEXITCODE -eq 0) { Write-Host "::notice::$env:PACKAGE_ID $env:VERSION ist schon in winget-pkgs."; exit 0 }
           $open = gh pr list --repo microsoft/winget-pkgs --state open --search "$env:PACKAGE_ID $env:VERSION in:title" --json url --jq '.[].url'
