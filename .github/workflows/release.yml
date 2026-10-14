@@ -5,6 +5,7 @@ name: Release
 # veroeffentlicht alles als GitHub-Release. Pruefen einer heruntergeladenen Datei:
 #   gh attestation verify WePrintEasy-Setup-1.2.3.exe --repo LeonMTN05/WePrintEasy
 # Die Website uebernimmt die Dateien danach mit: npm run package -- --from-release
+# Danach reicht winget.yml die Version bei winget ein (microsoft/winget-pkgs).
 # Manuell gestartet (workflow_dispatch) legt der Workflow einen fehlenden Tag auf dem gestarteten
 # Commit selbst an; ein vorhandener Tag wird so gebaut, wie er ist.
 
@@ -183,3 +184,16 @@ jobs:
             gh release create $env:TAG @assets @target --title "WePrintEasy $v" --notes-file dist/notes.md
           }
           if ($LASTEXITCODE -ne 0) { throw "gh release: Code $LASTEXITCODE" }
+
+  winget:
+    name: winget
+    needs: release
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: read
+      attestations: read
+    uses: ./.github/workflows/winget.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

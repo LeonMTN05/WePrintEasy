@@ -130,6 +130,22 @@ WePrintEasy-Setup-1.0.11.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /
 Für den **Microsoft Store** (Pakettyp EXE) gelten dieselben stillen Parameter: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 Ein neues Setup ersetzt die vorhandene Version (gleiche App-ID, gleicher Programmordner) und schließt vorher offene Druckerverwaltungen.
 
+### 📦 winget
+
+Den Windows-Installer gibt es auch im Windows-Paket-Manager als `LeonEliasMartin.WePrintEasy`:
+
+```powershell
+winget install LeonEliasMartin.WePrintEasy                # unbeaufsichtigt, lokale Konfiguration – danach Drucker in der Druckerverwaltung zuweisen
+winget install LeonEliasMartin.WePrintEasy --interactive  # mit Setup-Assistent (Speicherort, Drucker, Optionen)
+winget upgrade LeonEliasMartin.WePrintEasy                # Update, alle Einstellungen bleiben erhalten
+
+# Unbeaufsichtigt mit Parametern von Install-WePrintEasy.ps1 (--% gibt den Rest unverändert weiter, auch in Windows PowerShell 5.1)
+winget install LeonEliasMartin.WePrintEasy --silent --% --custom "/LANG=de /INSTALLARGS=\"-PrintServer fs01 -DisableClientDefaultPrinter\""
+```
+
+Deinstallieren mit `winget uninstall LeonEliasMartin.WePrintEasy` (die Konfiguration bleibt erhalten). Neue Versionen werden
+nach jedem Release automatisch bei winget eingereicht (`.github/workflows/winget.yml`).
+
 ### 🔔 Update-Prüfung
 
 Die Druckerverwaltung fragt beim Start im Hintergrund `https://dl.weprinteasy.com/latest.json` ab – höchstens einmal am Tag,
@@ -486,6 +502,8 @@ examples\                       Beispielkonfiguration und CSV-Vorlage
 tools\New-WpeIcon.ps1           Erzeugt das App-Symbol (src\WePrintEasy.ico, docs\weprinteasy-icon.png)
 tools\Build-Installer.ps1       Baut den Windows-Installer dist\WePrintEasy-Setup-<Version>.exe
 installer\WePrintEasy.iss       Inno-Setup-Skript des Windows-Installers
+installer\winget\               Vorlagen der winget-Manifeste
+tools\New-WingetManifest.ps1    Erzeugt die winget-Manifeste eines Releases (dist\winget)
 tests\                          Unit- und Integrationstests (Windows Server 2025)
 LICENSE                         MIT-Lizenz
 ```

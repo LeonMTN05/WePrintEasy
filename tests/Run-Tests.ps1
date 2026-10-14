@@ -439,6 +439,42 @@ Group;Lager;\\srv\Lager;20
     $icoBytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..\src\WePrintEasy.ico'))
     Assert 'WePrintEasy.ico: Symboldatei mit 8 Groessen (16 bis 256)' { [BitConverter]::ToUInt16($icoBytes, 2) -eq 1 -and [BitConverter]::ToUInt16($icoBytes, 4) -eq 8 -and $icoBytes[6] -eq 16 -and $icoBytes[6 + 7 * 16] -eq 0 }
 
+    Write-Host 'winget-Manifeste'
+    $wingetTool = Join-Path $PSScriptRoot '..\tools\New-WingetManifest.ps1'
+    $wingetDir = & $wingetTool -Version '9.9.9' -InstallerSha256 ('ab' * 32) -ReleaseDate '2026-01-02' -OutputDir (Join-Path $tmp 'winget') 6> $null
+    $wingetFiles = @(Get-ChildItem -LiteralPath $wingetDir -Filter '*.yaml')
+    $wingetText = @{}
+    foreach ($f in $wingetFiles) { $wingetText[$f.Name] = [IO.File]::ReadAllText($f.FullName) }
+    $wingetInstaller = $wingetText['LeonEliasMartin.WePrintEasy.installer.yaml']
+    $iss = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\installer\WePrintEasy.iss'))
+    Assert 'Ordner wie in winget-pkgs, 4 Manifeste' { $wingetDir -replace '\\', '/' -like '*/winget/manifests/l/LeonEliasMartin/WePrintEasy/9.9.9' -and $wingetFiles.Count -eq 4 }
+    Assert 'Installer-URL, Pruefsumme und Datum eingesetzt' {
+        $wingetInstaller -match '(?m)^  InstallerUrl: https://github\.com/LeonMTN05/WePrintEasy/releases/download/v9\.9\.9/WePrintEasy-Setup-9\.9\.9\.exe$' -and
+        $wingetInstaller -match "(?m)^  InstallerSha256: $('AB' * 32)$" -and $wingetInstaller -match '(?m)^ReleaseDate: 2026-01-02$'
+    }
+    Assert 'Keine Platzhalter und Vorlagen-Kommentare, Schema passt zum ManifestType' {
+        @($wingetText.Keys | Where-Object {
+                $t = $wingetText[$_]
+                $type = if ($t -match '(?m)^ManifestType: (\w+)$') { $Matches[1] } else { '?' }
+                $t -match '__[A-Z0-9_]+__' -or @($t -split "`n" | Where-Object { $_ -like '#*' }).Count -ne 2 -or
+                    $t -notmatch "(?m)^# yaml-language-server: \`$schema=https://aka\.ms/winget-manifest\.$type\.1\.12\.0\.schema\.json$" -or
+                    $t -notmatch '(?m)^PackageVersion: 9\.9\.9$'
+            }).Count -eq 0
+    }
+    Assert 'ProductCode = AppId des Installers und Schluessel der Deinstallation' {
+        $null = $iss -match '#define AppId "([0-9A-F-]+)"'
+        $code = "{$($Matches[1])}_is1"
+        $uninstall = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\Uninstall-WePrintEasy.ps1'))
+        @([regex]::Matches($wingetInstaller, "(?m)ProductCode: '([^']+)'") | Where-Object { $_.Groups[1].Value -ne $code }).Count -eq 0 -and
+            $uninstall.Contains("Uninstall\$code'")
+    }
+    Assert 'Herausgeber und Windows-Mindestversion wie im Installer' {
+        $null = $iss -match '(?m)^AppPublisher=(.+?)\r?$'; $publisher = $Matches[1]
+        $null = $iss -match '(?m)^MinVersion=(.+?)\r?$'; $minVersion = $Matches[1]
+        $wingetInstaller -match "(?m)^  Publisher: $([regex]::Escape($publisher))$" -and $wingetInstaller -match "(?m)^MinimumOSVersion: $([regex]::Escape($minVersion))\.0$"
+    }
+    Assert 'Ungueltige Version wird abgelehnt' { try { & $wingetTool -Version '1.0' -InstallerSha256 ('ab' * 32) -OutputDir (Join-Path $tmp 'winget') 6> $null; $false } catch { $true } }
+
     Write-Host 'Drucker der Sitzung (Windows-API)'
     $names = @(Get-WpeInstalledPrinterNames)
     $expected = @(Get-Printer -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
