@@ -1,0 +1,8 @@
+# Vorlage fuer winget (microsoft/winget-pkgs) - ausgefuellt von tools\New-WingetManifest.ps1
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
+
+PackageIdentifier: WePrintEasy.WePrintEasy
+PackageVersion: __VERSION__
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.12.0

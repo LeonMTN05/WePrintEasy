@@ -130,6 +130,22 @@ WePrintEasy-Setup-1.0.11.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /
 The same silent parameters apply to the **Microsoft Store** (package type EXE): `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 A new setup replaces the existing version (same app ID, same program folder) and closes open printer management windows first.
 
+### 📦 winget
+
+The Windows installer is also available in the Windows Package Manager as `WePrintEasy.WePrintEasy` (short: `weprinteasy`):
+
+```powershell
+winget install weprinteasy                # unattended, local configuration – then assign printers in printer management
+winget install weprinteasy --interactive  # with the setup wizard (configuration storage, printers, options)
+winget upgrade weprinteasy                # update, all settings are kept
+
+# Unattended with parameters of Install-WePrintEasy.ps1 (--% passes the rest unchanged, also in Windows PowerShell 5.1)
+winget install weprinteasy --silent --% --custom "/LANG=en /INSTALLARGS=\"-PrintServer fs01 -DisableClientDefaultPrinter\""
+```
+
+Uninstall with `winget uninstall weprinteasy` (the configuration is kept). New versions are submitted to
+winget automatically after each release (`.github/workflows/winget.yml`).
+
 ### 🔔 Update check
 
 At start, printer management queries `https://dl.weprinteasy.com/latest.json` in the background – at most once a day,
@@ -483,6 +499,8 @@ examples\                       Sample configuration and CSV template
 tools\New-WpeIcon.ps1           Generates the app icon (src\WePrintEasy.ico, docs\weprinteasy-icon.png)
 tools\Build-Installer.ps1       Builds the Windows installer dist\WePrintEasy-Setup-<version>.exe
 installer\WePrintEasy.iss       Inno Setup script of the Windows installer
+installer\winget\               Templates of the winget manifests
+tools\New-WingetManifest.ps1    Generates the winget manifests of a release (dist\winget)
 tests\                          Unit and integration tests (Windows Server 2025)
 LICENSE                         MIT License
 ```

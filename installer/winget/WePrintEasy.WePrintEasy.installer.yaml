@@ -1,0 +1,30 @@
+# Vorlage fuer winget (microsoft/winget-pkgs) - ausgefuellt von tools\New-WingetManifest.ps1
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: WePrintEasy.WePrintEasy
+PackageVersion: __VERSION__
+Platform:
+- Windows.Desktop
+# Wie MinVersion in installer\WePrintEasy.iss
+MinimumOSVersion: 10.0.14393.0
+InstallerType: inno
+Scope: machine
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+UpgradeBehavior: install
+ElevationRequirement: elevatesSelf
+# AppId in installer\WePrintEasy.iss, $uninstallKey in Uninstall-WePrintEasy.ps1
+ProductCode: '{62BED98D-291F-401A-A240-5C8EC56F56F3}_is1'
+AppsAndFeaturesEntries:
+- DisplayName: WePrintEasy
+  Publisher: Leon-Elias Martin
+  ProductCode: '{62BED98D-291F-401A-A240-5C8EC56F56F3}_is1'
+ReleaseDate: __RELEASE_DATE__
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/LeonMTN05/WePrintEasy/releases/download/v__VERSION__/WePrintEasy-Setup-__VERSION__.exe
+  InstallerSha256: __SHA256__
+ManifestType: installer
+ManifestVersion: 1.12.0
