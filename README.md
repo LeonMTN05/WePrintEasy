@@ -514,7 +514,7 @@ LICENSE                         MIT License
 
 Please report bugs and feature requests as an [issue](https://github.com/LeonMTN05/WePrintEasy/issues) –
 easiest via **About → Report a bug on GitHub…** in printer management, which fills in the system
-information for you. Pull requests are welcome; please run the tests first.
+information for you. Pull requests are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) (tests, static analysis, requirements).
 
 Like WePrintEasy? The author is happy about a ⭐ on GitHub.
 

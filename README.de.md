@@ -517,7 +517,7 @@ LICENSE                         MIT-Lizenz
 
 Fehler und Wünsche bitte als [Issue](https://github.com/LeonMTN05/WePrintEasy/issues) melden –
 am einfachsten über **Info → Fehler auf GitHub melden…** in der Druckerverwaltung, dann sind die
-Systeminformationen schon eingetragen. Pull Requests sind willkommen; bitte vorher die Tests ausführen.
+Systeminformationen schon eingetragen. Pull Requests sind willkommen – siehe [CONTRIBUTING.md](CONTRIBUTING.md) (Tests, statische Analyse, Anforderungen).
 
 Gefällt dir WePrintEasy? Über einen ⭐ auf GitHub freut sich der Autor.
 

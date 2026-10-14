@@ -41,6 +41,8 @@
 .EXAMPLE
     .\tests\New-WpeTestEnvironment.ps1 -Remove
 #>
+# Zufaellig erzeugtes Kennwort der Testbenutzer im Testlabor - wird ohnehin im Klartext angezeigt
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '')]
 [CmdletBinding()]
 param(
     [switch]$SkipInstall,

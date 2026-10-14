@@ -1,0 +1,38 @@
+name: Static analysis
+
+# PSScriptAnalyzer ueber alle PowerShell-Dateien, Regeln in PSScriptAnalyzerSettings.psd1.
+# Lokal: Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  psscriptanalyzer:
+    name: PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer | Where-Object Version -eq '1.25.0')) {
+            Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+          }
+          Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0
+          $files = Get-ChildItem -Recurse -File -Include *.ps1, *.psm1, *.psd1 | Where-Object FullName -notmatch '[\\/](\.git|node_modules)[\\/]'
+          $results = foreach ($f in $files) { Invoke-ScriptAnalyzer -Path $f.FullName -Settings ./PSScriptAnalyzerSettings.psd1 }
+          foreach ($r in $results) {
+            $file = [IO.Path]::GetRelativePath($PWD, $r.ScriptPath)
+            Write-Host "::$(if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }) file=$file,line=$($r.Line)::$($r.RuleName): $($r.Message)"
+          }
+          Write-Host "$($files.Count) Dateien geprueft, $(@($results).Count) Befunde."
+          if ($results) { exit 1 }
