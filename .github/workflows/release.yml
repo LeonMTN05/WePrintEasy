@@ -5,6 +5,8 @@ name: Release
 # veroeffentlicht alles als GitHub-Release. Pruefen einer heruntergeladenen Datei:
 #   gh attestation verify WePrintEasy-Setup-1.2.3.exe --repo LeonMTN05/WePrintEasy
 # Die Website uebernimmt die Dateien danach mit: npm run package -- --from-release
+# Manuell gestartet (workflow_dispatch) legt der Workflow einen fehlenden Tag auf dem gestarteten
+# Commit selbst an; ein vorhandener Tag wird so gebaut, wie er ist.
 
 on:
   push:
@@ -12,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Vorhandener Versions-Tag, z. B. v1.0.10'
+        description: 'Versions-Tag, z. B. v1.0.11 (fehlt er, wird er auf dem gestarteten Commit angelegt)'
         required: true
       dry_run:
         description: 'Nur bauen (Artefakt am Lauf), kein Herkunftsnachweis, kein Release'
@@ -42,8 +44,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ env.TAG }}
+          ref: ${{ github.event_name == 'push' && github.ref || github.sha }}
           persist-credentials: false
+
+      - name: Tag pruefen
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+$') { throw "'$env:TAG' ist kein Versions-Tag (v1.2.3)." }
+          $remote = git ls-remote --tags origin "refs/tags/$env:TAG"
+          if ($remote) {
+            # Vorhandenen Tag bauen, nicht den gestarteten Commit
+            git fetch --quiet --depth 1 origin "refs/tags/$($env:TAG):refs/tags/$($env:TAG)"
+            git checkout --quiet "refs/tags/$env:TAG"
+            if ($LASTEXITCODE -ne 0) { throw "Tag $env:TAG konnte nicht ausgecheckt werden." }
+          } else {
+            Write-Host "Tag $env:TAG fehlt - er wird mit dem Release auf $env:GITHUB_SHA angelegt."
+            'CREATE_TAG=true' >> $env:GITHUB_ENV
+          }
 
       - name: Version pruefen
         shell: pwsh
@@ -161,6 +179,7 @@ jobs:
             gh release upload $env:TAG @assets --clobber
             if ($LASTEXITCODE -eq 0) { gh release edit $env:TAG --notes-file dist/notes.md }
           } else {
-            gh release create $env:TAG @assets --verify-tag --title "WePrintEasy $v" --notes-file dist/notes.md
+            $target = if ($env:CREATE_TAG -eq 'true') { @('--target', $env:GITHUB_SHA) } else { @('--verify-tag') }
+            gh release create $env:TAG @assets @target --title "WePrintEasy $v" --notes-file dist/notes.md
           }
           if ($LASTEXITCODE -ne 0) { throw "gh release: Code $LASTEXITCODE" }
