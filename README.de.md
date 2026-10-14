@@ -8,6 +8,7 @@
 Gesetzt bei jeder Anmeldung – und auf Wunsch festgehalten während der ganzen Sitzung.
 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/LeonMTN05/WePrintEasy/badge)](https://scorecard.dev/viewer/?uri=github.com/LeonMTN05/WePrintEasy)
 [![Version](https://img.shields.io/badge/Version-1.0.10-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-F0A500)](LICENSE)
 <br>

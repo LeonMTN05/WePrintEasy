@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # GitHub Actions in .github/workflows (per Commit-SHA gepinnt; Dependabot aktualisiert SHA und Versionskommentar)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
