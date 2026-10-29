@@ -200,6 +200,8 @@ New-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name BackC
 Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name DisableLoopbackCheck -Value 1 -Type DWord
 Restart-Service LanmanServer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
+# Windows-API fuer Druckerverbindungen (Stufe 2) laeuft - auch wenn hier keine Verbindung moeglich ist
+Assert 'Get-WpePrinterConnection laeuft ohne Fehler' { $c = @(Get-WpePrinterConnection); $c.Count -ge 0 }
 $netPrinter = $null
 foreach ($cand in @("\\$alias\WPE-Test-5", "\\$server\WPE-Test-5")) {
     try {
