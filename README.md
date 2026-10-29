@@ -10,7 +10,7 @@ Set at every logon – and, if you like, kept in place for the entire session.
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/LeonMTN05/WePrintEasy/badge)](https://scorecard.dev/viewer/?uri=github.com/LeonMTN05/WePrintEasy)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15482/badge)](https://www.bestpractices.dev/projects/15482)
-[![Version](https://img.shields.io/badge/Version-1.0.12-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.13-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-requirements)
@@ -119,7 +119,7 @@ Alternative to the ZIP: a single `.exe` with an entry under **Apps / Programs an
 
 ```powershell
 # Unattended (exit code 0 = success, 10 = failed, log: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.12.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.13.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=en /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -366,6 +366,7 @@ no agent is running right now. They read the configuration again and set the def
 | Default print server | – | Pre-filled in the assignment dialog |
 | Language | as chosen during setup | see [Language](#-language) |
 | Users may choose their default printer themselves | off | icon in the session's notification area, see [Printer choice by users](#️-printer-choice-by-users) |
+| Printers offered | session and printer list | what the printer choice window shows: the session's printers, printers from the printer list or both |
 
 Changes to assignments and settings are **applied automatically** by running sessions (at the latest
 after one check interval) – no need to log on again. Only changed **group memberships** in AD take
@@ -379,8 +380,21 @@ effect after the next logon.
 ### 🖱️ Printer choice by users
 
 With **Settings → "Users may choose their default printer themselves"** (default: off), every session gets a
-WePrintEasy icon in the notification area. Clicking it opens a small window with the session's printers –
+WePrintEasy icon in the notification area. Clicking it opens a small window with printers –
 select a printer, **Set as default printer**, done. Users cannot change anything else there.
+
+**"Printers offered"** below it sets which printers the window shows:
+
+| Option | The window shows |
+|---|---|
+| Printers of the session and printers from the printer list (default) | both; a printer from the list that is already connected is listed once |
+| Only printers of the session | locally installed, redirected and already connected printers (behavior up to 1.0.12) |
+| Only printers from the printer list | only the printers on the **Printer list** tab (print/file server) – no local or redirected ones |
+
+A printer from the printer list that is not in the session yet is **connected** when it is chosen
+(its driver must be installed on the terminal server, see [More tips](#more-tips)).
+The printer list entry (`\\server\share`) is then stored as the choice; the agent connects it on other
+session hosts as well.
 
 - The choice applies **right away and at every logon** and is kept in place by the agent like an assignment.
 - It **replaces the user's assignment** (including a direct user assignment) and is listed in printer
@@ -468,6 +482,15 @@ In PowerShell: `Invoke-WpeRemoteForce -ComputerName TS01 -UserName jdoe`
 - **Printer "not (yet) available" in the log:** for redirected printers, the client PC is not
   connected or the name does not match – use a wildcard and check the exact name with `Get-Printer`
   in the session.
+- **Share name ≠ printer name:** in the session, Windows lists a connection to `\\fs01\HP-2OG` under the
+  server's printer name (e.g. `\\fs01\HP LaserJet 2nd floor`). WePrintEasy still finds the connection by its
+  share name (log: "… connected in this session under the server's printer name"); "Enforce now" shows both names.
+- **The default printer cannot be set at all** (not even manually, error 0x00000709): then Windows itself
+  fails, and WePrintEasy uses the same function. Common causes: missing permissions or leftovers under
+  `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows` (value `Device`, key `SessionDefaultDevices`),
+  often with FSLogix/user profile disks, or a group policy that sets a default printer itself
+  (`gpresult /h report.html`). If a **group assignment** also applies to the user, WePrintEasy enforces it after
+  their user assignment is removed – "Check user" shows this.
 
 ## 🗑️ Uninstall
 

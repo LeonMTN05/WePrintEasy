@@ -72,6 +72,7 @@
     'Agent.LegacyDisabled'           = '"Windows verwaltet Standarddrucker" deaktiviert.'
     'Agent.LegacyFailed'             = 'LegacyDefaultPrinterMode nicht setzbar: {0}'
     'Agent.Connected'                = 'Netzwerkdrucker ''{0}'' verbunden.'
+    'Agent.ResolvedShare'            = 'Drucker ''{0}'' ist in dieser Sitzung unter dem Druckernamen des Servers verbunden: ''{1}''.'
     'Agent.ConnectFailed'            = 'Verbindung zu ''{0}'' fehlgeschlagen: {1}'
     'Agent.Missing'                  = 'Vorgegebener Drucker ''{0}'' ist in dieser Sitzung (noch) nicht vorhanden.'
     'Agent.SetFailed'                = 'Standarddrucker ''{0}'' nicht setzbar: {1}'
@@ -108,9 +109,11 @@
     'Tray.Choose'                    = 'Drucker auswählen:'
     'Tray.SetDefault'                = 'Als Standarddrucker festlegen'
     'Tray.Done'                      = 'Ihr Standarddrucker ist jetzt: {0}'
-    'Tray.NoPrinters'                = 'In Ihrer Sitzung sind keine Drucker vorhanden.'
+    'Tray.NoPrinters'                = 'Es stehen keine Drucker zur Auswahl.'
     'Tray.SaveFailed'                = "Ihre Wahl konnte nicht gespeichert werden - der Standarddrucker bleibt unverändert.`n`n{0}`n`nBitte wenden Sie sich an Ihren Administrator."
     'Tray.SetFailed'                 = "Ihre Wahl ist gespeichert, '{0}' ließ sich aber gerade nicht als Standarddrucker setzen:`n{1}"
+    'Tray.ConnectFailed'             = "Der Drucker '{0}' konnte nicht verbunden werden - der Standarddrucker bleibt unverändert.`n`n{1}`n`nBitte wenden Sie sich an Ihren Administrator."
+    'Tray.NotFoundAfterConnect'      = "Der Drucker '{0}' wurde verbunden, ist in Ihrer Sitzung aber nicht zu finden - der Standarddrucker bleibt unverändert.`n`nBitte wenden Sie sich an Ihren Administrator."
 
     # --- Erzwingen auf einem Terminalserver (Invoke-WpeRemoteForce) ------------
     'Force.SearchUser'               = 'Benutzer ''{0}'' im AD suchen ...'
@@ -146,6 +149,7 @@
     'Force.CurrentDefault'           = 'Aktueller Standarddrucker: ''{0}'''
     'Force.PrinterConnected'         = 'Drucker ''{0}'' ist in der Sitzung verbunden.'
     'Force.PrinterNotConnected'      = 'Drucker ''{0}'' ist noch nicht verbunden - der Agent verbindet ihn.'
+    'Force.ShareResolved'            = 'Die Freigabe ''{0}'' erscheint in der Sitzung unter dem Druckernamen des Servers: ''{1}''.'
     'Force.AgentRunning'             = 'Agent überwacht die Sitzung {0} seit {1:HH:mm}.'
     'Force.NoAgent'                  = 'In der Sitzung läuft kein Agent (die Anmelde-Aufgabe ist bei der Anmeldung nicht gelaufen, z. B. weil die Anmeldung vor der Installation war). Er wird nach der Prüfung dauerhaft gestartet.'
     'Force.TaskDescriptionOnce'      = 'WePrintEasy: einmaliges Erzwingen (wird automatisch entfernt)'
@@ -242,6 +246,8 @@
     'Check.UserChoice.NoPermission'  = 'Benutzer dürfen in {0} nicht speichern - "Beheben" setzt die Rechte.'
     'Check.UserChoice.Foreign'       = 'Nicht beachtet, weil sie nicht dem Benutzer ihres Namens gehören: {0} (in {1})'
     'Check.UserChoice.Ok'            = 'Eingeschaltet - {0} Benutzer haben ihren Drucker selbst gewählt.'
+    'Check.UserChoiceCatalog'        = 'Drucker für die Druckerwahl'
+    'Check.UserChoiceCatalog.Empty'  = 'Benutzer sollen nur aus der Druckerliste wählen, die Druckerliste ist aber leer - das Fenster zeigt keine Drucker. Drucker im Reiter "Druckerliste" laden oder unter "Einstellungen" > "Angebotene Drucker" die Drucker der Sitzung zulassen.'
     'Check.UserChoiceShare'          = 'Freigabe für die Druckerwahl'
     'Check.UserChoiceShare.Ok'       = 'Benutzer dürfen auf {0} schreiben (die NTFS-Rechte begrenzen es auf die eigene Datei in choices).'
     'Check.UserChoiceShare.ReadOnly' = 'Auf {0} haben Benutzer nur das Freigaberecht "Lesen" ({1}) - sie können ihre Wahl nicht speichern ("Zugriff verweigert"). "Beheben" gibt ihnen "Ändern".'
@@ -342,7 +348,7 @@
         '- Ab dann ist der zugewiesene Drucker automatisch der Standarddrucker - auch nach dem Wiederverbinden von zu Hause oder von einem anderen PC.'
         '- Stellt der Mitarbeiter selbst einen anderen Standarddrucker ein, wird er nach kurzer Zeit zurückgesetzt (abschaltbar im Reiter "Einstellungen"). Einmal auf einem anderen Drucker drucken geht jederzeit über den Druckdialog.'
         '- Drucker vom eigenen PC (z. B. Homeoffice) nutzen: In der Remotedesktopverbindung unter "Lokale Ressourcen" > "Drucker" angehakt lassen und bei der Zuweisung einen Platzhalter verwenden, z. B. Brother*(umgeleitet*.'
-        '- Mitarbeiter selbst wählen lassen: Reiter "Einstellungen" > "Benutzer dürfen ihren Standarddrucker selbst wählen". Dann erscheint unten rechts im Infobereich der Sitzung das WePrintEasy-Symbol; ein Klick darauf öffnet die Druckerauswahl. Die Wahl gilt sofort und bei jeder Anmeldung, ersetzt die Zuweisung und steht hier unter "Zuweisungen" mit der Quelle "Vom Benutzer gewählt".'
+        '- Mitarbeiter selbst wählen lassen: Reiter "Einstellungen" > "Benutzer dürfen ihren Standarddrucker selbst wählen". Dann erscheint unten rechts im Infobereich der Sitzung das WePrintEasy-Symbol; ein Klick darauf öffnet die Druckerauswahl. Die Wahl gilt sofort und bei jeder Anmeldung, ersetzt die Zuweisung und steht hier unter "Zuweisungen" mit der Quelle "Vom Benutzer gewählt". Unter "Angebotene Drucker" legen Sie fest, ob das Fenster die Drucker der Sitzung, die Drucker der Druckerliste oder beides zeigt; ein Drucker der Druckerliste wird beim Auswählen verbunden.'
         ''
     )
     'Guide.Troubleshooting'          = @(
@@ -542,6 +548,10 @@
     'Settings.Connect'               = 'Fehlende Netzwerkdrucker (\\server\freigabe) bei der Anmeldung automatisch verbinden'
     'Settings.UserChoice'            = 'Benutzer dürfen ihren Standarddrucker selbst wählen (Symbol im Infobereich der Sitzung)'
     'Settings.UserChoiceHint'        = 'Die Wahl ersetzt die Zuweisung des Benutzers und steht unter "Zuweisungen" mit der Quelle "Vom Benutzer gewählt". Ändern Sie sie dort, gilt wieder Ihre Vorgabe. Bei zentraler Konfiguration brauchen Benutzer auf der Freigabe das Recht "Ändern".'
+    'Settings.UserChoiceSource'      = 'Angebotene Drucker:'
+    'Settings.UserChoiceSource.Both' = 'Drucker der Sitzung und Drucker aus der Druckerliste'
+    'Settings.UserChoiceSource.Session' = 'Nur Drucker der Sitzung (lokal, umgeleitet oder schon verbunden)'
+    'Settings.UserChoiceSource.Catalog' = 'Nur Drucker aus der Druckerliste (Druck-/Fileserver, werden bei Auswahl verbunden)'
     'Settings.UserChoiceFolderFailed' = "Der Ordner für die Druckerwahl ({0}) konnte nicht eingerichtet werden - Benutzer können ihre Wahl so nicht speichern:`n{1}"
     'Settings.DefaultServer'         = 'Druck-/Fileserver (Vorbelegung):'
     'Settings.Language'              = 'Sprache:'

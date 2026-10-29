@@ -18,7 +18,7 @@ $script:PrinterRegKey    = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\W
 $script:ComputerDomain   = ''   # Zwischenspeicher fuer Get-WpeLdapPrefix
 
 # Version und Projekt - nur hier pflegen
-$script:WpeVersion       = '1.0.12'
+$script:WpeVersion       = '1.0.13'
 $script:WpeAuthor        = 'LeonMTN05'
 $script:WpeAuthorUrl     = 'https://github.com/LeonMTN05'
 $script:WpeProjectUrl    = 'https://github.com/LeonMTN05/WePrintEasy'
@@ -166,7 +166,15 @@ function Get-WpeDefaultSettings {
         # Benutzer duerfen ihren Standarddrucker ueber das Symbol im Infobereich selbst waehlen
         # (ersetzt ihre Zuweisung; gespeichert im Ordner "choices" neben der Konfiguration)
         AllowUserPrinterChoice      = $false
+        # Welche Drucker das Fenster der Druckerwahl anbietet: Both = Drucker der Sitzung und die
+        # Druckerliste der Verwaltung, Session = nur Drucker der Sitzung, Catalog = nur die Druckerliste
+        UserChoicePrinterSource     = 'Both'
     }
+}
+
+# Einstellungen mit festen Werten (erster Wert = Standard). Andere Werte ersetzt ConvertTo-WpeConfig.
+$script:WpeSettingValues = @{
+    UserChoicePrinterSource = @('Both', 'Session', 'Catalog')
 }
 
 function Get-WpeConfigPath {
@@ -261,7 +269,14 @@ function ConvertTo-WpeConfig {
         $value = $defaults[$key]
         if ($rawSettings -and $rawSettings.PSObject.Properties[$key] -and $null -ne $rawSettings.$key) {
             $converted = $null
-            if (ConvertTo-WpeSettingValue $rawSettings.$key $defaults[$key] ([ref]$converted)) {
+            $valid = ConvertTo-WpeSettingValue $rawSettings.$key $defaults[$key] ([ref]$converted)
+            if ($valid -and $script:WpeSettingValues.ContainsKey($key)) {
+                # Feste Werte: Schreibweise wie vorgegeben (z. B. "catalog" -> "Catalog")
+                $known = @($script:WpeSettingValues[$key] | Where-Object { $_ -eq ([string]$converted).Trim() })
+                $valid = $known.Count -gt 0
+                if ($valid) { $converted = $known[0] }
+            }
+            if ($valid) {
                 $value = $converted
             } else {
                 $problems.Add((Get-WpeText 'Config.InvalidSetting' $key $rawSettings.$key $defaults[$key]))
@@ -1095,6 +1110,33 @@ function Test-WpeIsNetworkPrinterPath {
     return ($Name -match '^\\\\[^\\]+\\[^\\]+$' -and $Name.IndexOfAny([char[]]'*?') -lt 0)
 }
 
+function ConvertTo-WpeShortHost {
+    <# Rechnername ohne Domaene (fs01.firma.local -> fs01), zum Vergleich; IP-Adressen bleiben ganz. #>
+    param([string]$Name)
+    $n = ([string]$Name).Trim().TrimStart('\')
+    if ($n -match '^\d+(\.\d+){3}$' -or $n.Contains(':')) { return $n }
+    return $n.Split('.')[0]
+}
+
+function Find-WpeConnectionByShare {
+    <#
+        Sucht zu \\server\freigabe die Druckerverbindung der Sitzung (Get-WpePrinterConnection). Windows fuehrt
+        eine Verbindung unter dem Druckernamen auf dem Server, nicht unter dem Freigabenamen: Aus \\fs01\HP-2OG
+        wird z. B. \\fs01\HP LaserJet 2. OG. Der Server darf auch einmal mit, einmal ohne Domaene angegeben sein.
+    #>
+    param([string]$Path, [object[]]$Connections)
+    if ($Path -notmatch '^\\\\([^\\]+)\\([^\\]+)$') { return $null }
+    $server = ConvertTo-WpeShortHost $Matches[1]
+    $share = $Matches[2]
+    foreach ($c in @($Connections)) {
+        if (-not $c -or -not $c.ShareName -or -not [string]::Equals([string]$c.ShareName, $share, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $cServer = [string]$c.Server
+        if (-not $cServer -and [string]$c.Name -match '^\\\\([^\\]+)\\') { $cServer = $Matches[1] }
+        if ((ConvertTo-WpeShortHost $cServer) -eq $server) { return [string]$c.Name }
+    }
+    return $null
+}
+
 function Initialize-WpeSpoolerApi {
     <#
         Windows-API GetDefaultPrinter/SetDefaultPrinter (winspool). Nur sie beruecksichtigt den
@@ -1165,6 +1207,125 @@ public static string[] GetNames() {
 '@
     }
     @([WePrintEasy.PrinterEnum]::GetNames())
+}
+
+function Get-WpePrinterConnection {
+    <#
+        Druckerverbindungen der Sitzung (\\server\...) mit Name, Server und Freigabename (EnumPrinters Stufe 2).
+        Kann einen nicht erreichbaren Druckserver kurz abfragen - daher nur bei Bedarf aufrufen.
+    #>
+    if (-not ('WePrintEasy.PrinterConnections' -as [type])) {
+        Add-Type -Namespace WePrintEasy -Name PrinterConnections -MemberDefinition @'
+[DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+private static extern bool EnumPrinters(int flags, string name, int level, IntPtr buffer, int size, out int needed, out int returned);
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+private struct PRINTER_INFO_2 {
+    public string pServerName; public string pPrinterName; public string pShareName; public string pPortName;
+    public string pDriverName; public string pComment; public string pLocation; public IntPtr pDevMode;
+    public string pSepFile; public string pPrintProcessor; public string pDatatype; public string pParameters;
+    public IntPtr pSecurityDescriptor; public uint Attributes; public uint Priority; public uint DefaultPriority;
+    public uint StartTime; public uint UntilTime; public uint Status; public uint cJobs; public uint AveragePPM;
+}
+public static string[][] Get() {
+    const int flags = 4; // PRINTER_ENUM_CONNECTIONS
+    int needed, returned;
+    EnumPrinters(flags, null, 2, IntPtr.Zero, 0, out needed, out returned);
+    if (needed <= 0) return new string[0][];
+    IntPtr buffer = Marshal.AllocHGlobal(needed);
+    try {
+        if (!EnumPrinters(flags, null, 2, buffer, needed, out needed, out returned)) {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
+        string[][] result = new string[returned][];
+        int size = Marshal.SizeOf(typeof(PRINTER_INFO_2));
+        for (int i = 0; i < returned; i++) {
+            PRINTER_INFO_2 info = (PRINTER_INFO_2)Marshal.PtrToStructure(new IntPtr(buffer.ToInt64() + (long)i * size), typeof(PRINTER_INFO_2));
+            result[i] = new string[] { info.pPrinterName, info.pServerName, info.pShareName };
+        }
+        return result;
+    } finally {
+        Marshal.FreeHGlobal(buffer);
+    }
+}
+'@
+    }
+    foreach ($c in [WePrintEasy.PrinterConnections]::Get()) {
+        [pscustomobject]@{ Name = [string]$c[0]; Server = ([string]$c[1]).TrimStart('\'); ShareName = [string]$c[2] }
+    }
+}
+
+function Resolve-WpeInstalledPrinter {
+    <#
+        Installierter Drucker zu einer Vorgabe: wie Find-WpeInstalledPrinter, fuer \\server\freigabe zusaetzlich
+        die Verbindung, die Windows unter dem Druckernamen des Servers fuehrt (Find-WpeConnectionByShare).
+    #>
+    param([string]$Pattern, [string[]]$InstalledNames)
+    $match = Find-WpeInstalledPrinter -Pattern $Pattern -InstalledNames $InstalledNames
+    if ($match -or -not (Test-WpeIsNetworkPrinterPath $Pattern)) { return $match }
+    # Nur nachfragen, wenn zu diesem Server ueberhaupt eine Verbindung besteht
+    $server = ConvertTo-WpeShortHost $Pattern.Split('\')[2]
+    $sameServer = @($InstalledNames | Where-Object { $_ -match '^\\\\([^\\]+)\\' -and (ConvertTo-WpeShortHost $Matches[1]) -eq $server })
+    if (-not $sameServer.Count) { return $null }
+    try {
+        return (Find-WpeConnectionByShare -Path $Pattern -Connections @(Get-WpePrinterConnection))
+    } catch {
+        Write-Verbose $_.Exception.Message
+        return $null
+    }
+}
+
+function Get-WpeShareConnectionName {
+    <#
+        Name, unter dem Windows eine Verbindung zu \\server\freigabe fuehrt: \\server\<Druckername auf dem Server>
+        (fragt den Druckserver; fuer "Erzwingen"). $null, wenn die Freigabe dort nicht zu finden ist.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    if ($Path -notmatch '^\\\\([^\\]+)\\([^\\]+)$') { return $null }
+    $server = $Matches[1]
+    $share = $Matches[2]
+    $p = @(Get-Printer -ComputerName $server -ErrorAction Stop | Where-Object { $_.Shared -and $_.ShareName -eq $share }) | Select-Object -First 1
+    if ($p) { return "\\$server\$($p.Name)" }
+    return $null
+}
+
+function Get-WpeChoicePrinterList {
+    <#
+        Eintraege fuer das Fenster der Druckerwahl (Symbol im Infobereich), je nach Einstellung
+        UserChoicePrinterSource: Drucker der Sitzung (Session), Druckerliste der Verwaltung (Catalog) oder beides.
+        Je Eintrag: Text (Anzeige), Value (wird als Wahl gespeichert), Name (installierter Drucker, leer = erst
+        verbinden) und Path (Eintrag der Druckerliste). Ein schon verbundener Drucker der Liste steht nur einmal da.
+    #>
+    param(
+        [string]$Source = 'Both',
+        [object[]]$Catalog = @(),
+        [string[]]$InstalledNames = @(),
+        [object[]]$Connections = @()
+    )
+    $entries = New-Object System.Collections.ArrayList
+    $covered = @{}
+    if ($Source -ne 'Session') {
+        $paths = @{}
+        foreach ($p in @($Catalog)) {
+            if (-not $p -or -not $p.Path -or $paths.ContainsKey([string]$p.Path)) { continue }
+            $path = [string]$p.Path
+            $paths[$path] = $true
+            $installed = Find-WpeInstalledPrinter -Pattern $path -InstalledNames $InstalledNames
+            if (-not $installed -and (Test-WpeIsNetworkPrinterPath $path)) { $installed = Find-WpeConnectionByShare -Path $path -Connections $Connections }
+            if ($installed) { $covered[$installed] = $true }
+            $location = if ($p.PSObject.Properties['Location']) { [string]$p.Location } else { '' }
+            $text = if ($location) { '{0}  ({1})' -f $path, $location } else { $path }
+            [void]$entries.Add([pscustomobject]@{ Text = $text; Value = $path; Name = [string]$installed; Path = $path })
+        }
+    }
+    if ($Source -ne 'Catalog') {
+        foreach ($n in @($InstalledNames)) {
+            if (-not $n -or $covered.ContainsKey($n)) { continue }
+            $covered[$n] = $true
+            [void]$entries.Add([pscustomobject]@{ Text = $n; Value = $n; Name = $n; Path = '' })
+        }
+    }
+    $entries | Sort-Object -Property Text
 }
 
 function Set-WpeDefaultPrinter {
@@ -1356,6 +1517,8 @@ function New-WpeAgentState {
         Config      = $null
         Target      = $null
         Connected   = @{}
+        # Vorgabe \\server\freigabe -> Name der Verbindung in der Sitzung (Druckername auf dem Server)
+        Resolved    = @{}
         LegacySet   = $false
         LastProblem = $null
     }
@@ -1462,10 +1625,15 @@ function Invoke-WpeAgentCheck {
     }
 
     $current = Get-WpeDefaultPrinter
-    if (Test-WpePrinterMatch -Pattern $pattern -Name $current) { $State.LastProblem = $null; return 'Ok' }
+    $resolved = $State.Resolved[$pattern]
+    if ((Test-WpePrinterMatch -Pattern $pattern -Name $current) -or
+        ($current -and $resolved -and [string]::Equals($current, $resolved, [StringComparison]::OrdinalIgnoreCase))) {
+        $State.LastProblem = $null
+        return 'Ok'
+    }
 
     $installed = @(Get-WpeInstalledPrinterNames)
-    $match = Find-WpeInstalledPrinter -Pattern $pattern -InstalledNames $installed
+    $match = Resolve-WpeInstalledPrinter -Pattern $pattern -InstalledNames $installed
 
     if (-not $match -and [bool]$settings.ConnectNetworkPrinters -and (Test-WpeIsNetworkPrinterPath $pattern)) {
         # Verbindungsversuch hoechstens alle 5 Minuten wiederholen
@@ -1476,7 +1644,7 @@ function Invoke-WpeAgentCheck {
                 Add-WpePrinterConnection -Name $pattern -Confirm:$false
                 Write-WpeAgentLog $State (Get-WpeText 'Agent.Connected' $pattern)
                 $installed = @(Get-WpeInstalledPrinterNames)
-                $match = Find-WpeInstalledPrinter -Pattern $pattern -InstalledNames $installed
+                $match = Resolve-WpeInstalledPrinter -Pattern $pattern -InstalledNames $installed
             } catch {
                 Write-WpeAgentProblem $State (Get-WpeText 'Agent.ConnectFailed' $pattern $_.Exception.Message)
                 return 'Failed'
@@ -1488,6 +1656,12 @@ function Invoke-WpeAgentCheck {
         Write-WpeAgentProblem $State (Get-WpeText 'Agent.Missing' $pattern)
         return 'Missing'
     }
+    # Verbindung unter anderem Namen (Druckername statt Freigabename): merken, damit die naechste Pruefung passt
+    if (-not (Test-WpePrinterMatch -Pattern $pattern -Name $match) -and $State.Resolved[$pattern] -ne $match) {
+        $State.Resolved[$pattern] = $match
+        Write-WpeAgentLog $State (Get-WpeText 'Agent.ResolvedShare' $pattern $match)
+    }
+    if ([string]::Equals($current, $match, [StringComparison]::OrdinalIgnoreCase)) { $State.LastProblem = $null; return 'Ok' }
 
     try {
         Set-WpeDefaultPrinter -Name $match -Confirm:$false
@@ -1496,7 +1670,7 @@ function Invoke-WpeAgentCheck {
         return 'Failed'
     }
     $now = Get-WpeDefaultPrinter
-    if (Test-WpePrinterMatch -Pattern $pattern -Name $now) {
+    if ((Test-WpePrinterMatch -Pattern $pattern -Name $now) -or [string]::Equals($now, $match, [StringComparison]::OrdinalIgnoreCase)) {
         Write-WpeAgentLog $State (Get-WpeText 'Agent.Set' $match $current)
         $State.LastProblem = $null
         return 'Set'
@@ -1934,6 +2108,18 @@ function Invoke-WpeRemoteForce {
         $target = Resolve-WpeAssignment -Config $config -UserSid $user.Sid -UserName $user.Name -GroupSids $groupSids
         if (-not $target) { return (& $finish $false (Get-WpeText 'Force.NoAssignment' $account $ConfigPath)) }
         & $report 'OK' (Get-WpeText 'Agent.Target' $target.Printer (Get-WpeAssignmentSource $target))
+        # \\server\freigabe erscheint in der Sitzung unter dem Druckernamen des Servers - beide Namen gelten
+        $targetNames = @($target.Printer)
+        if (Test-WpeIsNetworkPrinterPath $target.Printer) {
+            try {
+                $alias = Get-WpeShareConnectionName -Path $target.Printer
+                if ($alias -and $alias -ne $target.Printer) {
+                    $targetNames += $alias
+                    & $report 'Info' (Get-WpeText 'Force.ShareResolved' $target.Printer $alias)
+                }
+            } catch { Write-Verbose $_.Exception.Message }
+        }
+        $isTarget = { param([string]$Name) @($targetNames | Where-Object { Test-WpePrinterMatch -Pattern $_ -Name $Name }).Count -gt 0 }
 
         # 3. Server
         & $report 'Info' (Get-WpeText 'Force.SearchServer' $ComputerName)
@@ -2071,7 +2257,7 @@ function Invoke-WpeRemoteForce {
         & $report 'Info' (Get-WpeText 'Force.CurrentDefault' $before)
         if (Test-WpeIsNetworkPrinterPath $target.Printer) {
             $conns = @(Get-WpeRemoteRegSubKey $cim $HKU "$($user.Sid)\Printers\Connections" | ForEach-Object { $_.Replace(',', '\') })
-            if (@($conns | Where-Object { Test-WpePrinterMatch -Pattern $target.Printer -Name $_ }).Count) {
+            if (@($conns | Where-Object { & $isTarget $_ }).Count) {
                 & $report 'OK' (Get-WpeText 'Force.PrinterConnected' $target.Printer)
             } else {
                 & $report 'Info' (Get-WpeText 'Force.PrinterNotConnected' $target.Printer)
@@ -2205,7 +2391,7 @@ function Invoke-WpeRemoteForce {
 
         # 12. Ergebnis
         $after = & $readDefault
-        if (Test-WpePrinterMatch -Pattern $target.Printer -Name $after) {
+        if (& $isTarget $after) {
             $msg = if ($before -eq $after) { Get-WpeText 'Force.AlreadyCorrect' $account $after } else { Get-WpeText 'Force.NowSet' $account $after $before }
             return (& $finish $true $msg)
         }
@@ -2608,6 +2794,10 @@ function Get-WpeSystemStatus {
         } catch {
             Add-Result 'UserChoice' 'Error' $_.Exception.Message 'ChoiceFolder'
         }
+        # Nur die Druckerliste anbieten, die aber leer ist: Benutzer saehen im Fenster keinen Drucker
+        if ($config.Settings.UserChoicePrinterSource -eq 'Catalog' -and @($config.Printers).Count -eq 0) {
+            Add-Result 'UserChoiceCatalog' 'Warning' (Get-WpeText 'Check.UserChoiceCatalog.Empty')
+        }
         # Zentrale Konfiguration: Die Freigabe muss Benutzern Schreiben erlauben (sonst "Zugriff verweigert")
         if ($ConfigPath.StartsWith('\\')) {
             try {
@@ -2704,6 +2894,8 @@ Export-ModuleMember -Function @(
     'Get-WpeAssignment', 'Set-WpeAssignment', 'Remove-WpeAssignment', 'Resolve-WpeAssignment',
     'Get-WpeCurrentAccount', 'ConvertTo-WpeLdapFilterValue', 'Get-WpeAccountSid', 'Find-WpeAdObject', 'Get-WpeAdUserGroupSids',
     'Test-WpePrinterMatch', 'Find-WpeInstalledPrinter', 'Test-WpeIsNetworkPrinterPath',
+    'ConvertTo-WpeShortHost', 'Find-WpeConnectionByShare', 'Get-WpePrinterConnection', 'Resolve-WpeInstalledPrinter',
+    'Get-WpeShareConnectionName', 'Get-WpeChoicePrinterList',
     'Get-WpeDefaultPrinter', 'Get-WpeInstalledPrinterNames', 'Set-WpeDefaultPrinter', 'Add-WpePrinterConnection', 'Get-WpePrinterList',
     'Set-WpeLegacyDefaultPrinterMode', 'New-WpeAgentState', 'Update-WpeAgentConfig', 'Invoke-WpeAgentCheck', 'Get-WpeAgentSleepSeconds',
     'Write-WpeAgentLog', 'Write-WpeAgentProblem',

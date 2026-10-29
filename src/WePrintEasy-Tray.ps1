@@ -7,8 +7,10 @@
 .DESCRIPTION
     Startet der Agent in der Benutzersitzung, wenn in der Druckerverwaltung
     "Benutzer duerfen ihren Standarddrucker selbst waehlen" eingeschaltet ist.
-    Ein Klick auf das Symbol oeffnet ein Fenster mit den Druckern der Sitzung -
-    mehr kann der Benutzer hier nicht einstellen.
+    Ein Klick auf das Symbol oeffnet ein Fenster mit den Druckern der Sitzung
+    und/oder der Druckerliste der Verwaltung (Einstellung UserChoicePrinterSource) -
+    mehr kann der Benutzer hier nicht einstellen. Ein Drucker der Druckerliste wird
+    beim Auswaehlen verbunden.
 
     Die Wahl gilt sofort, wird in choices\<SID>.json neben der Konfiguration
     gespeichert und ersetzt die Zuweisung des Benutzers (die Verwaltung zeigt
@@ -85,21 +87,56 @@ try {
         return ''
     }
 
-    function Set-ChosenPrinter {
-        <# Speichert die Wahl und setzt den Drucker sofort. $true bei Erfolg. #>
-        param([string]$Name)
+    function Get-ChoiceEntries {
+        <# Drucker fuer das Fenster - je nach Einstellung der Verwaltung aus der Sitzung und/oder der Druckerliste. #>
+        $installed = @()
+        try { $installed = @(Get-WpeInstalledPrinterNames) } catch { Write-Verbose $_.Exception.Message }
+        $source = 'Session'
+        $catalog = @()
         try {
-            # Erst speichern: Ginge das nicht, setzte der Agent den Drucker gleich wieder zurueck
-            [void](Save-WpeUserChoice -PrinterName $Name -ConfigPath $script:ConfigPath -DisplayName (Get-OwnDisplayName) -Confirm:$false)
+            $config = Read-WpeConfig -Path $script:ConfigPath
+            $source = [string]$config.Settings.UserChoicePrinterSource
+            $catalog = @($config.Printers)
+        } catch { Write-Verbose $_.Exception.Message }
+        $connections = @()
+        if ($source -ne 'Session' -and $catalog.Count -and @($installed | Where-Object { $_ -like '\*' }).Count) {
+            # Verbundene Drucker der Liste heissen in der Sitzung evtl. anders (Druckername statt Freigabename)
+            try { $connections = @(Get-WpePrinterConnection) } catch { Write-Verbose $_.Exception.Message }
+        }
+        @(Get-WpeChoicePrinterList -Source $source -Catalog $catalog -InstalledNames $installed -Connections $connections)
+    }
+
+    function Set-ChosenPrinter {
+        <# Verbindet den Drucker bei Bedarf, speichert die Wahl und setzt ihn sofort. $true bei Erfolg. #>
+        param($Entry)
+        $name = [string]$Entry.Name
+        if (-not $name) {
+            # Drucker aus der Druckerliste, in der Sitzung noch nicht vorhanden: erst verbinden
+            try {
+                Add-WpePrinterConnection -Name $Entry.Path -Confirm:$false
+                $name = Resolve-WpeInstalledPrinter -Pattern $Entry.Path -InstalledNames @(Get-WpeInstalledPrinterNames)
+            } catch {
+                Show-WpeMessage (Get-WpeText 'Tray.ConnectFailed' $Entry.Path $_.Exception.Message) 'Error'
+                return $false
+            }
+            if (-not $name) {
+                Show-WpeMessage (Get-WpeText 'Tray.NotFoundAfterConnect' $Entry.Path) 'Error'
+                return $false
+            }
+        }
+        try {
+            # Erst speichern: Ginge das nicht, setzte der Agent den Drucker gleich wieder zurueck.
+            # Gespeichert wird der Eintrag der Druckerliste (\\server\freigabe), sonst der Name in der Sitzung.
+            [void](Save-WpeUserChoice -PrinterName $Entry.Value -ConfigPath $script:ConfigPath -DisplayName (Get-OwnDisplayName) -Confirm:$false)
         } catch {
             Show-WpeMessage (Get-WpeText 'Tray.SaveFailed' $_.Exception.Message) 'Error'
             return $false
         }
         Send-AgentReload
         try {
-            Set-WpeDefaultPrinter -Name $Name -Confirm:$false
+            Set-WpeDefaultPrinter -Name $name -Confirm:$false
         } catch {
-            Show-WpeMessage (Get-WpeText 'Tray.SetFailed' $Name $_.Exception.Message) 'Warning'
+            Show-WpeMessage (Get-WpeText 'Tray.SetFailed' $name $_.Exception.Message) 'Warning'
         }
         Update-TrayText
         return $true
@@ -112,14 +149,13 @@ try {
             return
         }
         $current = Get-CurrentPrinter
-        $names = @()
-        try { $names = @(Get-WpeInstalledPrinterNames | Sort-Object) } catch { Write-Verbose $_.Exception.Message }
+        $script:Entries = @(Get-ChoiceEntries)
 
         # Nicht modal (das Symbol bleibt bedienbar): Die Ereignisse laufen nach dem Ende dieser Funktion,
         # deshalb liegen die Steuerelemente in Skriptvariablen
         $f = New-Object System.Windows.Forms.Form
         $f.Text = Get-WpeText 'Tray.Title'
-        $f.ClientSize = New-Object System.Drawing.Size(460, 430)
+        $f.ClientSize = New-Object System.Drawing.Size(560, 430)
         $f.StartPosition = 'CenterScreen'
         $f.FormBorderStyle = 'FixedDialog'
         $f.MaximizeBox = $false
@@ -130,39 +166,48 @@ try {
 
         $f.Controls.Add((New-WpeHeader (Get-WpeText 'Tray.Heading') (Get-WpeText 'Tray.Subtitle')))
 
-        $lblCurrent = New-WpeLabel (Get-WpeText 'Tray.Current' $(if ($current) { $current } else { Get-WpeText 'Tray.None' })) 16 72 430 20
+        $lblCurrent = New-WpeLabel (Get-WpeText 'Tray.Current' $(if ($current) { $current } else { Get-WpeText 'Tray.None' })) 16 72 530 20
         $lblCurrent.Font = $script:WpeFontBold
         $lblCurrent.AutoEllipsis = $true
         $f.Controls.Add($lblCurrent)
-        $f.Controls.Add((New-WpeLabel (Get-WpeText 'Tray.Choose') 16 98 430 20))
+        $f.Controls.Add((New-WpeLabel (Get-WpeText 'Tray.Choose') 16 98 530 20))
 
         $script:List = New-Object System.Windows.Forms.ListBox
         $script:List.Location = New-Object System.Drawing.Point(16, 124)
-        $script:List.Size = New-Object System.Drawing.Size(428, 240)
+        $script:List.Size = New-Object System.Drawing.Size(528, 240)
         $script:List.IntegralHeight = $false
+        $script:List.HorizontalScrollbar = $true
         $script:List.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-        foreach ($n in $names) { [void]$script:List.Items.Add($n) }
-        if ($current) { $script:List.SelectedItem = $current }
+        # Eintraege als Text; der Index zeigt in $script:Entries
+        foreach ($e in $script:Entries) { [void]$script:List.Items.Add($e.Text) }
+        if ($current) {
+            for ($i = 0; $i -lt $script:Entries.Count; $i++) {
+                if ([string]::Equals([string]$script:Entries[$i].Name, $current, [StringComparison]::OrdinalIgnoreCase)) { $script:List.SelectedIndex = $i; break }
+            }
+        }
         $f.Controls.Add($script:List)
 
         $script:OkButton = New-WpeButton (Get-WpeText 'Tray.SetDefault') 16 384 250
         $script:OkButton.Font = $script:WpeFontBold
-        $btnCancel = New-WpeButton (Get-WpeText 'Common.Cancel') 334 384 110
+        $btnCancel = New-WpeButton (Get-WpeText 'Common.Cancel') 434 384 110
         $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
         $btnCancel.Add_Click({ $script:Window.Close() })
         $f.Controls.AddRange(@($script:OkButton, $btnCancel))
         $f.AcceptButton = $script:OkButton
         $f.CancelButton = $btnCancel
 
-        $script:OkButton.Enabled = $null -ne $script:List.SelectedItem
-        $script:List.Add_SelectedIndexChanged({ $script:OkButton.Enabled = $null -ne $script:List.SelectedItem })
+        $script:OkButton.Enabled = $script:List.SelectedIndex -ge 0
+        $script:List.Add_SelectedIndexChanged({ $script:OkButton.Enabled = $script:List.SelectedIndex -ge 0 })
         $apply = {
-            if ($null -eq $script:List.SelectedItem) { return }
-            $name = [string]$script:List.SelectedItem
+            if ($script:List.SelectedIndex -lt 0) { return }
+            $entry = $script:Entries[$script:List.SelectedIndex]
             # Auch den schon eingestellten Drucker speichern: Dann gilt er bei jeder Anmeldung
-            if (Set-ChosenPrinter $name) {
+            # Verbinden kann einen Moment dauern
+            $script:Window.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+            try { $ok = Set-ChosenPrinter $entry } finally { $script:Window.Cursor = [System.Windows.Forms.Cursors]::Default }
+            if ($ok) {
                 $script:Window.Close()
-                $script:Tray.ShowBalloonTip(4000, (Get-WpeText 'Tray.Title'), (Get-WpeText 'Tray.Done' $name), [System.Windows.Forms.ToolTipIcon]::Info)
+                $script:Tray.ShowBalloonTip(4000, (Get-WpeText 'Tray.Title'), (Get-WpeText 'Tray.Done' (Get-CurrentPrinter)), [System.Windows.Forms.ToolTipIcon]::Info)
             }
         }
         $script:OkButton.Add_Click($apply)
@@ -170,7 +215,7 @@ try {
         $f.Add_FormClosed({ $script:Window = $null })
         $f.Add_Shown({ $script:Window.Activate(); [void]$script:List.Focus() })
 
-        if (-not $names) { $script:List.Enabled = $false; $lblCurrent.Text = Get-WpeText 'Tray.NoPrinters' }
+        if (-not $script:Entries.Count) { $script:List.Enabled = $false; $lblCurrent.Text = Get-WpeText 'Tray.NoPrinters' }
         $script:Window = $f
         $f.Show()
     }
