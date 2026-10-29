@@ -10,7 +10,7 @@ Gesetzt bei jeder Anmeldung – und auf Wunsch festgehalten während der ganzen 
 [![Tests](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml/badge.svg)](https://github.com/LeonMTN05/WePrintEasy/actions/workflows/tests.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/LeonMTN05/WePrintEasy/badge)](https://scorecard.dev/viewer/?uri=github.com/LeonMTN05/WePrintEasy)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15482/badge)](https://www.bestpractices.dev/projects/15482)
-[![Version](https://img.shields.io/badge/Version-1.0.12-00468C)](https://github.com/LeonMTN05/WePrintEasy)
+[![Version](https://img.shields.io/badge/Version-1.0.13-00468C)](https://github.com/LeonMTN05/WePrintEasy)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-F0A500)](LICENSE)
 <br>
 [![Windows Server](https://img.shields.io/badge/Windows%20Server-2019%20%7C%202022%20%7C%202025-0078D4)](#-systemvoraussetzungen)
@@ -119,7 +119,7 @@ Alternative zum ZIP: eine einzelne `.exe` mit Eintrag unter **Apps / Programme u
 
 ```powershell
 # Unbeaufsichtigt (Rückgabewert 0 = erfolgreich, 10 = fehlgeschlagen, Protokoll: C:\Program Files\WePrintEasy\Setup\WePrintEasy-Setup.log)
-WePrintEasy-Setup-1.0.12.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
+WePrintEasy-Setup-1.0.13.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=de /INSTALLARGS="-PrintServer fs01 -DisableClientDefaultPrinter"
 & 'C:\Program Files\WePrintEasy\unins000.exe' /VERYSILENT [/REMOVECONFIG]
 ```
 
@@ -369,6 +369,7 @@ kein Agent läuft. Sie lesen die Konfiguration neu ein und setzen den Standarddr
 | Standard-Druckserver | – | Vorbelegung im Zuweisungsdialog |
 | Sprache | wie beim Setup gewählt | siehe [Sprache](#-sprache) |
 | Benutzer dürfen ihren Standarddrucker selbst wählen | aus | Symbol im Infobereich der Sitzung, siehe [Druckerwahl durch Benutzer](#️-druckerwahl-durch-benutzer) |
+| Angebotene Drucker | Sitzung und Druckerliste | was das Fenster der Druckerwahl zeigt: Drucker der Sitzung, Drucker aus der Druckerliste oder beides |
 
 Änderungen an Zuweisungen und Einstellungen werden von laufenden Sitzungen
 **automatisch übernommen** (spätestens nach einem Prüfintervall) – eine Neuanmeldung ist nicht nötig.
@@ -383,7 +384,20 @@ Nur geänderte **Gruppenmitgliedschaften** im AD greifen erst nach erneuter Anme
 
 Unter **Einstellungen → „Benutzer dürfen ihren Standarddrucker selbst wählen“** (Standard: aus) bekommt
 jede Sitzung ein WePrintEasy-Symbol im Infobereich. Ein Klick öffnet ein kleines Fenster mit den Druckern
-der Sitzung – Drucker markieren, **Als Standarddrucker festlegen**, fertig. Mehr können Benutzer dort nicht einstellen.
+– Drucker markieren, **Als Standarddrucker festlegen**, fertig. Mehr können Benutzer dort nicht einstellen.
+
+Welche Drucker das Fenster zeigt, legt **„Angebotene Drucker“** darunter fest:
+
+| Auswahl | Das Fenster zeigt |
+|---|---|
+| Drucker der Sitzung und Drucker aus der Druckerliste (Standard) | beides; ein Drucker der Liste, der schon verbunden ist, steht nur einmal da |
+| Nur Drucker der Sitzung | lokal installierte, umgeleitete und schon verbundene Drucker (Verhalten bis 1.0.12) |
+| Nur Drucker aus der Druckerliste | nur die Drucker aus dem Reiter **Druckerliste** (Druck-/Fileserver) – keine lokalen oder umgeleiteten |
+
+Ein Drucker aus der Druckerliste, der in der Sitzung noch fehlt, wird beim Auswählen **verbunden**
+(dafür muss sein Treiber auf dem Terminalserver installiert sein, siehe [Weitere Hinweise](#weitere-hinweise)).
+Gespeichert wird dann der Eintrag der Druckerliste (`\\server\freigabe`); der Agent verbindet ihn auch auf
+anderen Sitzungshosts.
 
 - Die Wahl gilt **sofort und bei jeder Anmeldung** und wird vom Agenten wie eine Zuweisung festgehalten.
 - Sie **ersetzt die Zuweisung** des Benutzers (auch eine direkte Benutzerzuweisung) und steht in der
@@ -471,6 +485,15 @@ Per PowerShell: `Invoke-WpeRemoteForce -ComputerName TS01 -UserName mmuster`
 - **Drucker „(noch) nicht vorhanden“ im Protokoll:** Bei umgeleiteten Druckern ist der
   Client-PC nicht verbunden oder der Name passt nicht – Platzhalter verwenden und mit
   `Get-Printer` in der Sitzung den genauen Namen prüfen.
+- **Freigabename ≠ Druckername:** Windows führt eine Verbindung zu `\\fs01\HP-2OG` in der Sitzung
+  unter dem Druckernamen des Servers (z. B. `\\fs01\HP LaserJet 2. OG`). WePrintEasy findet die Verbindung
+  trotzdem über den Freigabenamen (Protokoll: „… unter dem Druckernamen des Servers verbunden“), „Erzwingen“ zeigt beide Namen.
+- **Standarddrucker lässt sich gar nicht setzen** (auch nicht von Hand, Fehler 0x00000709): Dann scheitert
+  Windows selbst, WePrintEasy nutzt dieselbe Funktion. Häufige Ursachen: fehlende Rechte oder Reste unter
+  `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows` (Wert `Device`, Schlüssel `SessionDefaultDevices`),
+  oft mit FSLogix/Benutzerprofil-Datenträgern, oder eine Gruppenrichtlinie, die selbst einen Standarddrucker setzt
+  (`gpresult /h bericht.html`). Gilt für den Benutzer zusätzlich eine **Gruppenzuweisung**, setzt WePrintEasy nach
+  dem Entfernen seiner Benutzerzuweisung diese durch – „Benutzer prüfen“ zeigt das.
 
 ## 🗑️ Deinstallation
 

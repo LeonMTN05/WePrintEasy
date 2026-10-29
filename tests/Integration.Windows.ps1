@@ -200,11 +200,16 @@ New-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name BackC
 Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name DisableLoopbackCheck -Value 1 -Type DWord
 Restart-Service LanmanServer -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
+# Windows-API fuer Druckerverbindungen (Stufe 2) laeuft - auch wenn hier keine Verbindung moeglich ist
+Assert 'Get-WpePrinterConnection laeuft ohne Fehler' { $c = @(Get-WpePrinterConnection); $c.Count -ge 0 }
 $netPrinter = $null
 foreach ($cand in @("\\$alias\WPE-Test-5", "\\$server\WPE-Test-5")) {
     try {
         Add-Printer -ConnectionName $cand -ErrorAction Stop
-        Remove-Printer -Name $cand -ErrorAction SilentlyContinue
+        # Unter welchem Namen fuehrt Windows die Verbindung? (Drucker "WPE Test 5", Freigabe "WPE-Test-5")
+        $probe = @(Get-WpePrinterConnection | Where-Object ShareName -eq 'WPE-Test-5')
+        Write-Host "    Verbindung $cand erscheint als: $(@(Get-WpeInstalledPrinterNames | Where-Object { $_ -like '\\*' }) -join ' | ') (Stufe 2: $(@($probe | ForEach-Object { '{0} [{1}, {2}]' -f $_.Name, $_.Server, $_.ShareName }) -join ' | '))"
+        foreach ($n in @($cand) + @($probe | ForEach-Object { $_.Name })) { Remove-Printer -Name $n -ErrorAction SilentlyContinue }
         $netPrinter = $cand
         break
     } catch {
@@ -215,8 +220,18 @@ Remove-Item $userLog -ErrorAction SilentlyContinue
 if ($netPrinter) {
     Set-WpeAssignment -Type User -Name $env:USERNAME -Printer $netPrinter | Out-Null
     $p = Invoke-Agent -Once
-    Assert "Netzwerkdrucker $netPrinter wird verbunden und Standard" { (Get-WpeDefaultPrinter) -eq $netPrinter }
+    $conn = @(Get-WpePrinterConnection | Where-Object ShareName -eq 'WPE-Test-5') | Select-Object -First 1
+    $netHost = $netPrinter.Split('\')[2]
+    Assert "Netzwerkdrucker $netPrinter wird verbunden und Standard (auch unter dem Druckernamen)" { $d = Get-WpeDefaultPrinter; $d -eq $netPrinter -or ($conn -and $d -eq $conn.Name) }
+    Assert 'Get-WpePrinterConnection: Verbindung mit Server und Freigabename' { $conn -and (-not $conn.Server -or (ConvertTo-WpeShortHost $conn.Server) -eq (ConvertTo-WpeShortHost $netHost)) -and $conn.ShareName -eq 'WPE-Test-5' }
+    Assert 'Resolve-WpeInstalledPrinter: Freigabe ergibt den Drucker der Sitzung' { (Resolve-WpeInstalledPrinter -Pattern $netPrinter -InstalledNames @(Get-WpeInstalledPrinterNames)) -eq (Get-WpeDefaultPrinter) }
+    Assert 'Get-WpeShareConnectionName: Druckername auf dem Server' { (Get-WpeShareConnectionName -Path $netPrinter) -eq "\\$netHost\WPE Test 5" }
     Assert 'Protokoll: Netzwerkdrucker verbunden' { (Get-LogText) -match 'Network printer .* connected' }
+    $firstLog = Get-LogText
+    Remove-Item $userLog -ErrorAction SilentlyContinue
+    $p = Invoke-Agent -Once
+    Assert 'Zweiter Lauf: Drucker gilt als gesetzt (Ergebnis Ok, keine Warnung)' { $p.ExitCode -eq 0 -and (Get-LogText) -match 'result Ok' -and (Get-LogText) -notmatch '\[WARN\]' }
+    Set-Content -LiteralPath $userLog -Value $firstLog -Encoding UTF8 -NoNewline
 } else {
     Write-Host '  [SKIP] Druckerverbindung auf einem Einzelrechner nicht moeglich (Windows verbietet Verbindungen zu sich selbst).' -ForegroundColor Yellow
     Set-WpeAssignment -Type User -Name $env:USERNAME -Printer "\\$server\WPE-Test-5" | Out-Null

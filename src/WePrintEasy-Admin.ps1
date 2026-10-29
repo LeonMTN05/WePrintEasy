@@ -704,6 +704,8 @@ $lstStatus.BringToFront()
 
 # ---- Tab: Einstellungen ----
 $tabSettings = New-Tab (Get-WpeText 'Admin.TabSettings')
+# Kleines Fenster: lieber rollen als den Knopf "Speichern" abschneiden
+$tabSettings.AutoScroll = $true
 
 function New-Number {
     param([int]$X, [int]$Y, [int]$Min, [int]$Max)
@@ -753,7 +755,17 @@ $y += 26
 $lblUserChoiceHint = New-WpeLabel (Get-WpeText 'Settings.UserChoiceHint') 35 $y 1040 36
 $lblUserChoiceHint.ForeColor = [System.Drawing.Color]::DimGray
 $tabSettings.Controls.Add($lblUserChoiceHint)
-$y += 50
+$y += 40
+# Welche Drucker das Fenster der Druckerwahl anbietet (Reihenfolge wie $script:UserChoiceSources)
+$tabSettings.Controls.Add((New-WpeLabel (Get-WpeText 'Settings.UserChoiceSource') 35 $y 240))
+$cboUserChoiceSource = New-Object System.Windows.Forms.ComboBox
+$cboUserChoiceSource.DropDownStyle = 'DropDownList'
+$cboUserChoiceSource.Location = New-Object System.Drawing.Point(280, $y)
+$cboUserChoiceSource.Size = New-Object System.Drawing.Size(520, 23)
+$script:UserChoiceSources = @('Both', 'Session', 'Catalog')
+foreach ($code in $script:UserChoiceSources) { [void]$cboUserChoiceSource.Items.Add((Get-WpeText "Settings.UserChoiceSource.$code")) }
+$tabSettings.Controls.Add($cboUserChoiceSource)
+$y += 40
 $tabSettings.Controls.Add((New-WpeLabel (Get-WpeText 'Settings.DefaultServer') 15 $y 260))
 $txtDefServer = New-Object System.Windows.Forms.TextBox
 $txtDefServer.Location = New-Object System.Drawing.Point(280, $y)
@@ -1157,6 +1169,7 @@ $btnRunAgent.Add_Click({
 $btnMyLog.Add_Click({ Show-AgentLog -Path (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'WePrintEasy\agent.log') -Title (Get-WpeText 'Admin.MyLog') })
 
 $chkEnforce.Add_CheckedChanged({ $numInterval.Enabled = $chkEnforce.Checked; $numDuration.Enabled = $chkEnforce.Checked })
+$chkUserChoice.Add_CheckedChanged({ $cboUserChoiceSource.Enabled = $chkUserChoice.Checked })
 
 function Set-NumberValue {
     param($Control, $Value)
@@ -1173,6 +1186,8 @@ function Update-SettingsTab {
     $chkLegacy.Checked = [bool]$s.SetLegacyDefaultPrinterMode
     $chkConnect.Checked = [bool]$s.ConnectNetworkPrinters
     $chkUserChoice.Checked = [bool]$s.AllowUserPrinterChoice
+    $cboUserChoiceSource.SelectedIndex = [Math]::Max(0, [array]::IndexOf($script:UserChoiceSources, [string]$s.UserChoicePrinterSource))
+    $cboUserChoiceSource.Enabled = $chkUserChoice.Checked
     $txtDefServer.Text = [string]$s.DefaultPrintServer
     # Angezeigt wird die Sprache, in der das Programm gerade läuft
     $cboLanguage.SelectedIndex = [Math]::Max(0, [array]::IndexOf($script:LanguageCodes, (Get-WpeLanguage)))
@@ -1193,6 +1208,7 @@ $btnSaveSettings.Add_Click({
             $cfg.Settings.SetLegacyDefaultPrinterMode = $chkLegacy.Checked
             $cfg.Settings.ConnectNetworkPrinters = $chkConnect.Checked
             $cfg.Settings.AllowUserPrinterChoice = $chkUserChoice.Checked
+            $cfg.Settings.UserChoicePrinterSource = $script:UserChoiceSources[[Math]::Max(0, $cboUserChoiceSource.SelectedIndex)]
             $cfg.Settings.DefaultPrintServer = $txtDefServer.Text.Trim().TrimStart('\')
             $cfg.Settings.Language = $newLanguage
             Save-WpeConfig -Config $cfg -Path $script:ConfigPath -Confirm:$false

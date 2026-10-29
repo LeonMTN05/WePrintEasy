@@ -71,6 +71,7 @@
     'Agent.LegacyDisabled'           = '"Let Windows manage my default printer" disabled.'
     'Agent.LegacyFailed'             = 'LegacyDefaultPrinterMode could not be set: {0}'
     'Agent.Connected'                = 'Network printer ''{0}'' connected.'
+    'Agent.ResolvedShare'            = 'Printer ''{0}'' is connected in this session under the server''s printer name: ''{1}''.'
     'Agent.ConnectFailed'            = 'Connection to ''{0}'' failed: {1}'
     'Agent.Missing'                  = 'Assigned printer ''{0}'' is not (yet) available in this session.'
     'Agent.SetFailed'                = 'Default printer ''{0}'' could not be set: {1}'
@@ -107,9 +108,11 @@
     'Tray.Choose'                    = 'Select a printer:'
     'Tray.SetDefault'                = 'Set as default printer'
     'Tray.Done'                      = 'Your default printer is now: {0}'
-    'Tray.NoPrinters'                = 'There are no printers in your session.'
+    'Tray.NoPrinters'                = 'There are no printers to choose from.'
     'Tray.SaveFailed'                = "Your choice could not be saved - the default printer stays as it is.`n`n{0}`n`nPlease contact your administrator."
     'Tray.SetFailed'                 = "Your choice has been saved, but '{0}' could not be set as default printer right now:`n{1}"
+    'Tray.ConnectFailed'             = "The printer '{0}' could not be connected - the default printer stays as it is.`n`n{1}`n`nPlease contact your administrator."
+    'Tray.NotFoundAfterConnect'      = "The printer '{0}' was connected but cannot be found in your session - the default printer stays as it is.`n`nPlease contact your administrator."
 
     # --- Enforce now on a terminal server (Invoke-WpeRemoteForce) ---------------
     'Force.SearchUser'               = 'Searching for user ''{0}'' in AD ...'
@@ -145,6 +148,7 @@
     'Force.CurrentDefault'           = 'Current default printer: ''{0}'''
     'Force.PrinterConnected'         = 'Printer ''{0}'' is connected in the session.'
     'Force.PrinterNotConnected'      = 'Printer ''{0}'' is not connected yet - the agent will connect it.'
+    'Force.ShareResolved'            = 'The share ''{0}'' appears in the session under the server''s printer name: ''{1}''.'
     'Force.AgentRunning'             = 'Agent has been monitoring session {0} since {1:HH:mm}.'
     'Force.NoAgent'                  = 'No agent is running in the session (the logon task did not run at logon, e.g. because the logon happened before the installation). It will be started permanently after the check.'
     'Force.TaskDescriptionOnce'      = 'WePrintEasy: one-time enforcement (removed automatically)'
@@ -241,6 +245,8 @@
     'Check.UserChoice.NoPermission'  = 'Users cannot save in {0} - "Fix" sets the permissions.'
     'Check.UserChoice.Foreign'       = 'Ignored because they do not belong to the user they are named after: {0} (in {1})'
     'Check.UserChoice.Ok'            = 'Enabled - {0} users have chosen their printer themselves.'
+    'Check.UserChoiceCatalog'        = 'Printers for the printer choice'
+    'Check.UserChoiceCatalog.Empty'  = 'Users may only choose from the printer list, but the printer list is empty - the window shows no printers. Load printers on the "Printer list" tab or allow the session''s printers under "Settings" > "Printers offered".'
     'Check.UserChoiceShare'          = 'Share for printer choice'
     'Check.UserChoiceShare.Ok'       = 'Users may write on {0} (the NTFS permissions limit it to their own file in choices).'
     'Check.UserChoiceShare.ReadOnly' = 'On {0}, users only have the share permission "Read" ({1}) - they cannot save their choice ("Access denied"). "Fix" gives them "Change".'
@@ -341,7 +347,7 @@
         '- From then on, the assigned printer is automatically the default printer - also after reconnecting from home or from another PC.'
         '- If the employee sets a different default printer, it is reset after a short time (can be switched off in the "Settings" tab). Printing once on another printer is always possible via the print dialog.'
         '- Using printers of their own PC (e.g. home office): leave "Local Resources" > "Printers" ticked in Remote Desktop Connection and use a wildcard in the assignment, e.g. Brother*(redirected*.'
-        '- Letting employees choose: "Settings" tab > "Users may choose their default printer themselves". The WePrintEasy icon then appears in the notification area of the session (bottom right); clicking it opens the printer selection. The choice applies right away and at every logon, replaces the assignment and is listed here under "Assignments" with the source "Chosen by user".'
+        '- Letting employees choose: "Settings" tab > "Users may choose their default printer themselves". The WePrintEasy icon then appears in the notification area of the session (bottom right); clicking it opens the printer selection. The choice applies right away and at every logon, replaces the assignment and is listed here under "Assignments" with the source "Chosen by user". "Printers offered" sets whether the window shows the session''s printers, the printers of the printer list or both; a printer from the printer list is connected when it is chosen.'
         ''
     )
     'Guide.Troubleshooting'          = @(
@@ -541,6 +547,10 @@
     'Settings.Connect'               = 'Automatically connect missing network printers (\\server\share) at logon'
     'Settings.UserChoice'            = 'Users may choose their default printer themselves (icon in the session''s notification area)'
     'Settings.UserChoiceHint'        = 'The choice replaces the user''s assignment and is listed under "Assignments" with the source "Chosen by user". If you change it there, your setting applies again. With a central configuration, users need the "Change" permission on the share.'
+    'Settings.UserChoiceSource'      = 'Printers offered:'
+    'Settings.UserChoiceSource.Both' = 'Printers of the session and printers from the printer list'
+    'Settings.UserChoiceSource.Session' = 'Only printers of the session (local, redirected or already connected)'
+    'Settings.UserChoiceSource.Catalog' = 'Only printers from the printer list (print/file server, connected when chosen)'
     'Settings.UserChoiceFolderFailed' = "The folder for printer choices ({0}) could not be set up - users cannot save their choice:`n{1}"
     'Settings.DefaultServer'         = 'Print/file server (default):'
     'Settings.Language'              = 'Language:'

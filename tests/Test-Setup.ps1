@@ -8,7 +8,7 @@
     Haengt ein Schritt, bricht der Test nach -TimeoutMinutes ab und zeigt Prozesse, Fenster und Protokolle.
     NUR auf einem Testsystem ausfuehren (CI): installiert und entfernt WePrintEasy.
 
-    Aufruf:  .\tests\Test-Setup.ps1 -InstallerPath .\dist\WePrintEasy-Setup-1.0.12.exe [-ManifestPath <installer.yaml>]
+    Aufruf:  .\tests\Test-Setup.ps1 -InstallerPath .\dist\WePrintEasy-Setup-1.0.13.exe [-ManifestPath <installer.yaml>]
 #>
 [CmdletBinding()]
 param(

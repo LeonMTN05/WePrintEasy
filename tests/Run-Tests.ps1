@@ -51,6 +51,10 @@ try {
     Assert 'Ungueltige Prioritaet: Zuweisung bleibt mit 100' { $c.Assignments.Count -eq 2 -and ($c.Assignments | Where-Object Name -eq 'G1').Priority -eq 100 -and ($c.Assignments | Where-Object Name -eq 'G2').Priority -eq 20 }
     Assert 'Ersetzte Werte werden gemeldet' { $c.Problems.Count -eq 4 -and ($c.Problems -join ' ') -like "*LogonPhaseSeconds*'abc'*" -and ($c.Problems -join ' ') -like "*'G1'*" }
     Assert 'Gueltige Datei meldet nichts' { (Read-WpeConfig -Path (Join-Path $tmp 'fehlt.json')).Problems.Count -eq 0 }
+    Set-Content -LiteralPath (Join-Path $tmp 'quelle.json') -Value '{ "Settings": { "UserChoicePrinterSource": "catalog" } }' -Encoding UTF8
+    Assert 'Druckerwahl-Quelle: Schreibweise wird vereinheitlicht' { (Read-WpeConfig -Path (Join-Path $tmp 'quelle.json')).Settings.UserChoicePrinterSource -ceq 'Catalog' }
+    Set-Content -LiteralPath (Join-Path $tmp 'quelle.json') -Value '{ "Settings": { "UserChoicePrinterSource": "Alle" } }' -Encoding UTF8
+    Assert 'Druckerwahl-Quelle: unbekannter Wert ergibt Standard und wird gemeldet' { $q = Read-WpeConfig -Path (Join-Path $tmp 'quelle.json'); $q.Settings.UserChoicePrinterSource -eq 'Both' -and ($q.Problems -join ' ') -like "*UserChoicePrinterSource*'Alle'*" }
     Assert 'Agent-Wartezeit mit ersetzten Werten' { (Get-WpeAgentSleepSeconds -Settings $c.Settings -ElapsedSeconds 500) -eq -1 }
     Save-WpeConfig -Config $c -Path $cfgPath -Confirm:$false
     Assert 'Problems wird nicht gespeichert' { -not ((Get-Content -LiteralPath $cfgPath -Raw) -match 'Problems') -and (Read-WpeConfig -Path $cfgPath).Problems.Count -eq 0 }
@@ -140,6 +144,30 @@ Group;Lager;\\srv\Lager;20
     Set-WpePrinterCatalog -Printers @(ConvertTo-WpePrintServerPrinter -Printers $many -Server 'fs01' -LocalDrivers @('D')) -ReplaceServer 'fs01' -ConfigPath $cfgPath
     Assert '70 Drucker vom Fileserver' { @((Read-WpeConfig -Path $cfgPath).Printers | Where-Object Server -eq 'fs01').Count -eq 70 }
 
+    Write-Host 'Druckerverbindungen (Freigabename / Druckername)'
+    $conns = @(
+        [pscustomobject]@{ Name = '\\fs01\HP LaserJet 2. OG'; Server = 'fs01.firma.local'; ShareName = 'HP-2OG' }
+        [pscustomobject]@{ Name = '\\fs02\Kyocera'; Server = ''; ShareName = 'Kyo' }
+    )
+    Assert 'Kurzname: Domaene weg, IP-Adresse bleibt' { (ConvertTo-WpeShortHost '\\FS01.firma.local') -eq 'FS01' -and (ConvertTo-WpeShortHost '10.0.0.5') -eq '10.0.0.5' }
+    Assert 'Verbindung ueber den Freigabenamen gefunden (Server mit/ohne Domaene)' { (Find-WpeConnectionByShare -Path '\\fs01\hp-2og' -Connections $conns) -eq '\\fs01\HP LaserJet 2. OG' -and (Find-WpeConnectionByShare -Path '\\fs01.firma.local\HP-2OG' -Connections $conns) -eq '\\fs01\HP LaserJet 2. OG' }
+    Assert 'Server ohne Angabe: aus dem Verbindungsnamen' { (Find-WpeConnectionByShare -Path '\\fs02\Kyo' -Connections $conns) -eq '\\fs02\Kyocera' }
+    Assert 'Gleiche Freigabe auf anderem Server passt nicht' { $null -eq (Find-WpeConnectionByShare -Path '\\fs03\HP-2OG' -Connections $conns) -and $null -eq (Find-WpeConnectionByShare -Path 'HP-2OG' -Connections $conns) }
+
+    Write-Host 'Fenster der Druckerwahl: angebotene Drucker'
+    $cat = @((New-WpeCatalogEntry -Path '\\fs01\HP-2OG' -Location '2. OG'), (New-WpeCatalogEntry -Path '\\fs01\Kyo-EG'), (New-WpeCatalogEntry -Path '\\fs01\Lager'), (New-WpeCatalogEntry -Path '\\fs01\Lager'))
+    $inst = @('Microsoft Print to PDF', '\\fs01\HP LaserJet 2. OG', '\\fs01\Kyo-EG', 'Client (umgeleitet 3)')
+    $both = @(Get-WpeChoicePrinterList -Source Both -Catalog $cat -InstalledNames $inst -Connections $conns)
+    $hp = $both | Where-Object Path -eq '\\fs01\HP-2OG'
+    Assert 'Beides: Druckerliste und Drucker der Sitzung, verbundene nur einmal' { $both.Count -eq 5 -and @($both | Where-Object Path).Count -eq 3 -and @($both | Where-Object { $_.Text -eq '\\fs01\HP LaserJet 2. OG' }).Count -eq 0 }
+    Assert 'Verbundener Listendrucker: Name in der Sitzung, gespeichert wird die Freigabe' { $hp.Name -eq '\\fs01\HP LaserJet 2. OG' -and $hp.Value -eq '\\fs01\HP-2OG' -and $hp.Text -eq '\\fs01\HP-2OG  (2. OG)' }
+    Assert 'Nicht verbundener Listendrucker: ohne Namen (wird bei Auswahl verbunden)' { ($both | Where-Object Path -eq '\\fs01\Lager').Name -eq '' }
+    $sess = @(Get-WpeChoicePrinterList -Source Session -Catalog $cat -InstalledNames $inst -Connections $conns)
+    Assert 'Nur Sitzung: alle Drucker der Sitzung, nichts aus der Liste' { $sess.Count -eq 4 -and @($sess | Where-Object Path).Count -eq 0 -and @($sess | Where-Object { $_.Value -ne $_.Name }).Count -eq 0 }
+    $only = @(Get-WpeChoicePrinterList -Source Catalog -Catalog $cat -InstalledNames $inst -Connections $conns)
+    Assert 'Nur Druckerliste: keine lokalen oder umgeleiteten Drucker' { $only.Count -eq 3 -and @($only | Where-Object { -not $_.Path }).Count -eq 0 }
+    Assert 'Nur Druckerliste, Liste leer: kein Eintrag' { @(Get-WpeChoicePrinterList -Source Catalog -Catalog @() -InstalledNames $inst).Count -eq 0 }
+
     Write-Host 'Anmelde-Agent (simulierte Drucker)'
     $mod = Get-Module WePrintEasy
     # Windows-spezifische Funktionen im Modul durch Attrappen ersetzen
@@ -147,11 +175,22 @@ Group;Lager;\\srv\Lager;20
         $script:FakeDefault = 'Client-Drucker (umgeleitet 2)'
         $script:FakeInstalled = @('Microsoft Print to PDF', 'Client-Drucker (umgeleitet 2)')
         $script:FakeConnectable = @('\\fs01\HP-1')
+        # Freigabe -> Name, unter dem Windows die Verbindung fuehrt (Druckername auf dem Server)
+        $script:FakeConnectAs = @{}
+        $script:FakeConnections = @()
         $script:FakeCalls = New-Object System.Collections.ArrayList
         function script:Get-WpeDefaultPrinter { $script:FakeDefault }
         function script:Get-WpeInstalledPrinterNames { $script:FakeInstalled }
         function script:Set-WpeDefaultPrinter { param($Name, [switch]$Confirm) [void]$script:FakeCalls.Add("set:$Name"); if ($script:FakeInstalled -contains $Name) { $script:FakeDefault = $Name } }
-        function script:Add-WpePrinterConnection { param($Name, [switch]$Confirm) [void]$script:FakeCalls.Add("connect:$Name"); if ($script:FakeConnectable -notcontains $Name) { throw 'Zugriff verweigert' }; $script:FakeInstalled += $Name }
+        function script:Add-WpePrinterConnection {
+            param($Name, [switch]$Confirm)
+            [void]$script:FakeCalls.Add("connect:$Name")
+            if ($script:FakeConnectable -notcontains $Name) { throw 'Zugriff verweigert' }
+            $as = if ($script:FakeConnectAs.ContainsKey($Name)) { $script:FakeConnectAs[$Name] } else { $Name }
+            $script:FakeInstalled += $as
+            $script:FakeConnections += [pscustomobject]@{ Name = $as; Server = $Name.Split('\')[2]; ShareName = $Name.Split('\')[3] }
+        }
+        function script:Get-WpePrinterConnection { $script:FakeConnections }
         function script:Set-WpeLegacyDefaultPrinterMode { [void]$script:FakeCalls.Add('legacy'); $true }
         function script:Get-WpeAccountSid { param($Name) $null }
     }
@@ -187,6 +226,23 @@ Group;Lager;\\srv\Lager;20
     Assert 'Nicht verbindbarer Drucker: Failed' { $r1 -eq 'Failed' }
     Assert 'Kein zweiter Verbindungsversuch innerhalb 5 Min.' { $r2 -eq 'Missing' -and @((& $mod { $script:FakeCalls }) | Where-Object { $_ -eq 'connect:\\fs01\Gibtsnicht' }).Count -eq 1 }
     Assert 'Warnungen werden nicht wiederholt protokolliert' { @($logLines | Where-Object { $_ -like '`[WARN`]*' }).Count -eq 2 }
+
+    # Windows fuehrt die Verbindung unter dem Druckernamen des Servers, nicht unter dem Freigabenamen
+    & $mod { $script:FakeConnectable += '\\fs01\HP-2OG'; $script:FakeConnectAs['\\fs01\HP-2OG'] = '\\fs01\HP LaserJet 2. OG' }
+    Set-WpeAssignment -Type User -Name 'max' -Sid 'S-1-5-21-9-9-9-500' -Printer '\\fs01\HP-2OG' -ConfigPath $agentCfg | Out-Null
+    Update-WpeAgentConfig -State $state
+    $logLines.Clear()
+    $r1 = Invoke-WpeAgentCheck -State $state
+    Assert 'Freigabe mit anderem Druckernamen: verbunden und gesetzt' { $r1 -eq 'Set' -and (& $mod { $script:FakeDefault }) -eq '\\fs01\HP LaserJet 2. OG' }
+    Assert 'Protokoll nennt den Namen in der Sitzung' { ($logLines -join "`n") -like '*HP LaserJet 2. OG*' -and @($logLines | Where-Object { $_ -like '`[WARN`]*' }).Count -eq 0 }
+    $sets = @((& $mod { $script:FakeCalls }) | Where-Object { $_ -like 'set:*' }).Count
+    Assert 'Naechste Pruefung: OK, nicht erneut gesetzt' { (Invoke-WpeAgentCheck -State $state) -eq 'Ok' -and @((& $mod { $script:FakeCalls }) | Where-Object { $_ -like 'set:*' }).Count -eq $sets }
+    & $mod { $script:FakeDefault = 'Microsoft Print to PDF' }
+    Assert 'Verstellt: wieder auf den Druckernamen gesetzt, ohne neue Verbindung' { (Invoke-WpeAgentCheck -State $state) -eq 'Set' -and (& $mod { $script:FakeDefault }) -eq '\\fs01\HP LaserJet 2. OG' -and @((& $mod { $script:FakeCalls }) | Where-Object { $_ -eq 'connect:\\fs01\HP-2OG' }).Count -eq 1 }
+    $state5 = New-WpeAgentState -ConfigPath $agentCfg -UserSid 'S-1-5-21-9-9-9-500' -UserName 'max' -GroupSids @() -Log { param($m, $l) }
+    Update-WpeAgentConfig -State $state5
+    & $mod { $script:FakeDefault = 'Microsoft Print to PDF' }
+    Assert 'Neue Sitzung, Verbindung besteht schon: ohne erneutes Verbinden gefunden' { (Invoke-WpeAgentCheck -State $state5) -eq 'Set' -and (& $mod { $script:FakeDefault }) -eq '\\fs01\HP LaserJet 2. OG' -and @((& $mod { $script:FakeCalls }) | Where-Object { $_ -eq 'connect:\\fs01\HP-2OG' }).Count -eq 1 }
 
     $state2 = New-WpeAgentState -ConfigPath $agentCfg -UserSid 'S-1-5-21-9-9-9-777' -UserName 'anna' -GroupSids @() -Log { param($m, $l) }
     Update-WpeAgentConfig -State $state2
@@ -242,6 +298,12 @@ Group;Lager;\\srv\Lager;20
     Assert 'Systempruefung warnt vor fremder Datei' { $r = @(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoice'; $r.Status -eq 'Warning' -and $r.Detail -like '*S-1-5-21-9-9-9-666.json*' }
     Remove-Item -LiteralPath $foreign, (Join-Path $choiceDir 'S-1-5-21-9-9-9-667.json')
     Assert 'Systempruefung: Ordner in Ordnung' { $r = @(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoice'; $r.Status -eq 'OK' -and $r.Detail -like '*1*' }
+    Assert 'Einstellung UserChoicePrinterSource: Standard beides' { (Read-WpeConfig -Path $choiceCfg).Settings.UserChoicePrinterSource -eq 'Both' -and -not (@(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoiceCatalog') }
+    $c = Read-WpeConfig -Path $choiceCfg; $c.Settings.UserChoicePrinterSource = 'Catalog'; Save-WpeConfig -Config $c -Path $choiceCfg
+    Assert 'Systempruefung: nur Druckerliste, aber Liste leer -> Warnung' { $r = @(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoiceCatalog'; $r.Status -eq 'Warning' }
+    Set-WpePrinterCatalog -Printers @('\\fs01\HP-1') -ConfigPath $choiceCfg -Confirm:$false
+    Assert 'Systempruefung: Druckerliste gefuellt -> keine Warnung' { -not (@(Get-WpeSystemStatus -ConfigPath $choiceCfg) | Where-Object Id -eq 'UserChoiceCatalog') -and (Read-WpeConfig -Path $choiceCfg).Settings.UserChoicePrinterSource -eq 'Catalog' }
+    $c = Read-WpeConfig -Path $choiceCfg; $c.Settings.UserChoicePrinterSource = 'Both'; Save-WpeConfig -Config $c -Path $choiceCfg
 
     $eff = Read-WpeEffectiveConfig -Path $choiceCfg
     $mine = @($eff.Assignments | Where-Object { $_.Type -eq 'User' -and $_.Sid -eq $mySid })
