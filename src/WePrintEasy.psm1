@@ -1341,6 +1341,16 @@ function Set-WpeDefaultPrinter {
     }
 }
 
+function Get-WpePrinterErrorHint {
+    <#
+        Hinweis fuer den Administrator zu bekannten Windows-Fehlercodes beim Verbinden eines Netzwerkdruckers
+        (0x00000bc4, 0x00000709, 0x00000bcb, 0x0000011b - auch als HRESULT 0x8007....). Sonst $null.
+    #>
+    param([string]$Message)
+    if ($Message -match '(?i)0x(?:8007|0000)(0bc4|0709|0bcb|011b)\b') { return (Get-WpeText "Printer.Hint.$($Matches[1].ToUpperInvariant())") }
+    return $null
+}
+
 function Add-WpePrinterConnection {
     <# Verbindet einen freigegebenen Netzwerkdrucker (\\server\freigabe) fuer den Benutzer. #>
     [CmdletBinding(SupportsShouldProcess)]
@@ -1358,7 +1368,10 @@ function Add-WpePrinterConnection {
         } catch {
             # Windows-Fehlercode mit ausgeben (z. B. 0x00000bcb = Treiber fehlt, 0x00000709 = Name ungueltig)
             $code = if ($_.FullyQualifiedErrorId -match 'HRESULT (0x[0-9a-fA-F]+)') { " [$($Matches[1])]" } else { '' }
-            throw "$($_.Exception.Message.Trim())$code / WScript: $first"
+            $text = "$($_.Exception.Message.Trim())$code / WScript: $first"
+            $hint = Get-WpePrinterErrorHint $text
+            if ($hint) { $text += "`n`n$hint" }
+            throw $text
         }
     }
 }
@@ -2896,7 +2909,7 @@ Export-ModuleMember -Function @(
     'Test-WpePrinterMatch', 'Find-WpeInstalledPrinter', 'Test-WpeIsNetworkPrinterPath',
     'ConvertTo-WpeShortHost', 'Find-WpeConnectionByShare', 'Get-WpePrinterConnection', 'Resolve-WpeInstalledPrinter',
     'Get-WpeShareConnectionName', 'Get-WpeChoicePrinterList',
-    'Get-WpeDefaultPrinter', 'Get-WpeInstalledPrinterNames', 'Set-WpeDefaultPrinter', 'Add-WpePrinterConnection', 'Get-WpePrinterList',
+    'Get-WpeDefaultPrinter', 'Get-WpeInstalledPrinterNames', 'Set-WpeDefaultPrinter', 'Add-WpePrinterConnection', 'Get-WpePrinterErrorHint', 'Get-WpePrinterList',
     'Set-WpeLegacyDefaultPrinterMode', 'New-WpeAgentState', 'Update-WpeAgentConfig', 'Invoke-WpeAgentCheck', 'Get-WpeAgentSleepSeconds',
     'Write-WpeAgentLog', 'Write-WpeAgentProblem',
     'Get-WpeSystemStatus', 'Set-WpeClientDefaultPrinterPolicy',

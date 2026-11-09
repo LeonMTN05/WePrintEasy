@@ -154,6 +154,12 @@ Group;Lager;\\srv\Lager;20
     Assert 'Server ohne Angabe: aus dem Verbindungsnamen' { (Find-WpeConnectionByShare -Path '\\fs02\Kyo' -Connections $conns) -eq '\\fs02\Kyocera' }
     Assert 'Gleiche Freigabe auf anderem Server passt nicht' { $null -eq (Find-WpeConnectionByShare -Path '\\fs03\HP-2OG' -Connections $conns) -and $null -eq (Find-WpeConnectionByShare -Path 'HP-2OG' -Connections $conns) }
 
+    Write-Host 'Hinweise zu Fehlercodes beim Verbinden'
+    $msg = 'Beim Ausfuehren ist ein Fehler aufgetreten. [0x80070bc4] / WScript: Es wurden keine Drucker gefunden. (Ausnahme von HRESULT: 0x80070BC4)'
+    Assert '0x80070bc4 liefert den RPC-Hinweis' { (Get-WpePrinterErrorHint $msg) -like '*RpcUseNamedPipeProtocol*' }
+    Assert '0x00000709 und 0x00000bcb werden erkannt' { (Get-WpePrinterErrorHint 'Fehler 0x00000709') -like '*0x00000709*' -and (Get-WpePrinterErrorHint 'error 0x00000BCB') -like '*0x00000bcb*' }
+    Assert 'Unbekannter Code: kein Hinweis' { $null -eq (Get-WpePrinterErrorHint 'Access denied [0x80070005]') -and $null -eq (Get-WpePrinterErrorHint '') }
+
     Write-Host 'Fenster der Druckerwahl: angebotene Drucker'
     $cat = @((New-WpeCatalogEntry -Path '\\fs01\HP-2OG' -Location '2. OG'), (New-WpeCatalogEntry -Path '\\fs01\Kyo-EG'), (New-WpeCatalogEntry -Path '\\fs01\Lager'), (New-WpeCatalogEntry -Path '\\fs01\Lager'))
     $inst = @('Microsoft Print to PDF', '\\fs01\HP LaserJet 2. OG', '\\fs01\Kyo-EG', 'Client (umgeleitet 3)')

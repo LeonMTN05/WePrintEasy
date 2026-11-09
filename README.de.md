@@ -482,6 +482,17 @@ Per PowerShell: `Invoke-WpeRemoteForce -ComputerName TS01 -UserName mmuster`
 - **Netzwerkdrucker lässt sich nicht verbinden:** Seit den PrintNightmare-Updates dürfen
   Standardbenutzer keine Druckertreiber installieren. Treiber auf dem Terminalserver
   vorinstallieren (oder Package Point and Print / „Zugelassene Druckserver“ per GPO konfigurieren).
+- **Fehler 0x00000bc4 / 0x80070bc4 („Es wurden keine Drucker gefunden“) beim Verbinden:** Seit Windows 11 22H2
+  verbindet Windows Netzwerkdrucker per **RPC über TCP**. Sperrt die Firewall des Druckservers die dynamischen
+  RPC-Ports (oder lässt der Server kein RPC über TCP zu), scheitert die Verbindung – auch von Hand. Schon
+  verbundene Drucker desselben Servers funktionieren dabei oft weiter. Abhilfe auf dem **Terminalserver**:
+  Gruppenrichtlinie *Computerkonfiguration → Administrative Vorlagen → Drucker →*
+  **„RPC-Verbindungseinstellungen konfigurieren“ = „RPC über Named Pipes“** (entspricht
+  `HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\RPC`, `RpcUseNamedPipeProtocol` = 1 (DWORD)),
+  danach Druckwarteschlange neu starten – oder die Firewall des Druckservers für RPC (TCP 135 und dynamische Ports) öffnen.
+  Gegenprobe in der Sitzung des Benutzers: `rundll32 printui.dll,PrintUIEntry /in /n "\\server\freigabe"`.
+  Prüfen Sie außerdem, ob die Freigabe auf dem Druckserver (noch) existiert. WePrintEasy hängt an die Fehlermeldung
+  einen Hinweis für bekannte Fehlercodes an (0x00000bc4, 0x00000709, 0x00000bcb, 0x0000011b).
 - **Drucker „(noch) nicht vorhanden“ im Protokoll:** Bei umgeleiteten Druckern ist der
   Client-PC nicht verbunden oder der Name passt nicht – Platzhalter verwenden und mit
   `Get-Printer` in der Sitzung den genauen Namen prüfen.

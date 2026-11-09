@@ -42,6 +42,10 @@
     'Printer.SetDefaultFailed'       = 'SetDefaultPrinter failed: {0} (error {1})'
     'Printer.ConnectAction'          = 'Connect printer'
     'Printer.InstallDriverAction'    = 'Install driver'
+    'Printer.Hint.0BC4'              = 'Note for the administrator: 0x00000bc4 = no printers were found. Usually the terminal server cannot reach the print server over RPC over TCP (default since Windows 11 22H2), e.g. because its firewall blocks the dynamic RPC ports. Fix on the terminal server: Group Policy Computer Configuration > Administrative Templates > Printers > "Configure RPC connection settings" = "RPC over named pipes" (or HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\RPC, RpcUseNamedPipeProtocol = 1), then restart the Print Spooler. Otherwise check that the share exists on the print server.'
+    'Printer.Hint.0709'              = 'Note for the administrator: 0x00000709 = invalid printer name. Check that the share still has this name on the print server and reload the printer list.'
+    'Printer.Hint.0BCB'              = 'Note for the administrator: 0x00000bcb = driver missing. Standard users may not install printer drivers - preinstall the driver on the terminal server (printer list > "Install missing drivers").'
+    'Printer.Hint.011B'              = 'Note for the administrator: 0x0000011b = RPC authentication rejected by the print server. Bring the print server and terminal server to the same update level.'
     'Catalog.SaveAction'             = 'Save printer list ({0} printers)'
 
     'Verbose.LanguageUnreadable'     = 'Language could not be read from the configuration: {0}'
@@ -356,6 +360,7 @@
         '- Printer is not set for an employee? Select the assignment > "Enforce now...": sets the printer immediately in their session on the terminal server and shows every step live - and where it fails (e.g. WePrintEasy not installed there, different configuration, no agent in the session, printer missing).'
         '- Tab "Check user" > "Show log": shows what the agent did for this employee, e.g. "Default printer set: ... (previously: ...)" - this also shows you what changed the printer.'
         '- "Printer is not (yet) available": share name wrong, file server not reachable or driver missing - update the printer list with "Install missing drivers".'
+        '- Printer cannot be connected, error 0x00000bc4 ("No printers were found"): on the terminal server set the Group Policy Printers > "Configure RPC connection settings" to "RPC over named pipes", or open the print server''s firewall for RPC over TCP.'
         '- Group membership changed in AD? Only takes effect after the employee signs out and in again.'
         '- Test the agent in your own session: tab "Setup check" > "Run agent for me now" or in PowerShell:'
         '$ powershell -ExecutionPolicy Bypass -File "C:\Program Files\WePrintEasy\WePrintEasy-Agent.ps1" -Once -Verbose'

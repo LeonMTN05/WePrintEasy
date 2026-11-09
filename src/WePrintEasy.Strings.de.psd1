@@ -43,6 +43,10 @@
     'Printer.SetDefaultFailed'       = 'SetDefaultPrinter fehlgeschlagen: {0} (Fehler {1})'
     'Printer.ConnectAction'          = 'Druckerverbindung herstellen'
     'Printer.InstallDriverAction'    = 'Treiber installieren'
+    'Printer.Hint.0BC4'              = 'Hinweis für den Administrator: 0x00000bc4 = keine Drucker gefunden. Meist erreicht der Terminalserver den Druckserver nicht per RPC über TCP (Standard seit Windows 11 22H2), z. B. weil dessen Firewall die dynamischen RPC-Ports sperrt. Abhilfe auf dem Terminalserver: Gruppenrichtlinie Computerkonfiguration > Administrative Vorlagen > Drucker > "RPC-Verbindungseinstellungen konfigurieren" = "RPC über Named Pipes" (oder HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\RPC, RpcUseNamedPipeProtocol = 1), dann Druckwarteschlange neu starten. Sonst prüfen, ob die Freigabe auf dem Druckserver existiert.'
+    'Printer.Hint.0709'              = 'Hinweis für den Administrator: 0x00000709 = Druckername ungültig. Prüfen, ob die Freigabe auf dem Druckserver (noch) so heißt, und die Druckerliste neu einlesen.'
+    'Printer.Hint.0BCB'              = 'Hinweis für den Administrator: 0x00000bcb = Treiber fehlt. Standardbenutzer dürfen keine Druckertreiber installieren - Treiber auf dem Terminalserver vorinstallieren (Druckerliste > "Fehlende Treiber installieren").'
+    'Printer.Hint.011B'              = 'Hinweis für den Administrator: 0x0000011b = RPC-Authentifizierung vom Druckserver abgelehnt. Druckserver und Terminalserver auf denselben Update-Stand bringen.'
     'Catalog.SaveAction'             = 'Druckerliste speichern ({0} Drucker)'
 
     'Verbose.LanguageUnreadable'     = 'Sprache nicht aus der Konfiguration lesbar: {0}'
@@ -357,6 +361,7 @@
         '- Drucker wird beim Mitarbeiter nicht gesetzt? Zuweisung auswählen > "Erzwingen...": setzt den Drucker sofort in seiner Sitzung auf dem Terminalserver und zeigt live jeden Schritt - und woran es scheitert (z. B. WePrintEasy dort nicht installiert, andere Konfiguration, kein Agent in der Sitzung, Drucker fehlt).'
         '- Reiter "Benutzer prüfen" > "Protokoll anzeigen": zeigt, was der Agent bei diesem Mitarbeiter getan hat, z. B. "Standarddrucker gesetzt: ... (vorher: ...)" - so sehen Sie auch, wodurch der Drucker verstellt wurde.'
         '- "Drucker (noch) nicht vorhanden": Freigabename falsch, Fileserver nicht erreichbar oder Treiber fehlt - Druckerliste mit "Fehlende Treiber installieren" aktualisieren.'
+        '- Drucker lässt sich nicht verbinden, Fehler 0x00000bc4 ("Es wurden keine Drucker gefunden"): Auf dem Terminalserver per Gruppenrichtlinie Drucker > "RPC-Verbindungseinstellungen konfigurieren" auf "RPC über Named Pipes" stellen oder die Firewall des Druckservers für RPC über TCP öffnen.'
         '- Gruppenmitgliedschaft im AD geändert? Gilt erst nach Ab- und Anmelden des Mitarbeiters.'
         '- Agent in der eigenen Sitzung testen: Reiter "Einrichtung" > "Agent jetzt für mich ausführen" oder in PowerShell:'
         '$ powershell -ExecutionPolicy Bypass -File "C:\Program Files\WePrintEasy\WePrintEasy-Agent.ps1" -Once -Verbose'

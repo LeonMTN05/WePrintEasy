@@ -479,6 +479,17 @@ In PowerShell: `Invoke-WpeRemoteForce -ComputerName TS01 -UserName jdoe`
 - **A network printer cannot be connected:** since the PrintNightmare updates, standard users may not
   install printer drivers. Preinstall the drivers on the terminal server (or configure Package Point
   and Print / "Approved servers" via GPO).
+- **Error 0x00000bc4 / 0x80070bc4 ("No printers were found") when connecting:** Since Windows 11 22H2,
+  Windows connects network printers using **RPC over TCP**. If the print server's firewall blocks the dynamic
+  RPC ports (or the server does not accept RPC over TCP), the connection fails – also when done by hand. Printers
+  of the same server that are already connected often keep working. Fix on the **terminal server**:
+  Group Policy *Computer Configuration → Administrative Templates → Printers →*
+  **"Configure RPC connection settings" = "RPC over named pipes"** (equivalent to
+  `HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\RPC`, `RpcUseNamedPipeProtocol` = 1 (DWORD)),
+  then restart the Print Spooler – or open the print server's firewall for RPC (TCP 135 and dynamic ports).
+  Cross-check in the user's session: `rundll32 printui.dll,PrintUIEntry /in /n "\\server\share"`.
+  Also check that the share still exists on the print server. WePrintEasy appends a hint for known error codes
+  to the error message (0x00000bc4, 0x00000709, 0x00000bcb, 0x0000011b).
 - **Printer "not (yet) available" in the log:** for redirected printers, the client PC is not
   connected or the name does not match – use a wildcard and check the exact name with `Get-Printer`
   in the session.
